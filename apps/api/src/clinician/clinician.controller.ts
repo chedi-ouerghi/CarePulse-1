@@ -5,13 +5,16 @@ import {
   Delete,
   Param,
   Body,
+  UseGuards,
 } from "@nestjs/common";
 import { ClinicianService } from "./clinician.service";
 import { ClinicianCreateSchema } from "@carepulse/shared-types";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 
 const createClinicianDto = new ZodValidationPipe(ClinicianCreateSchema);
 
+@UseGuards(JwtAuthGuard)
 @Controller("clinicians")
 export class ClinicianController {
   constructor(private readonly clinicianService: ClinicianService) {}

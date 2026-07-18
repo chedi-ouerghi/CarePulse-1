@@ -7,22 +7,99 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// ─── Enums ─────────────────────────────────────────────
+
+enum DiabetesType {
+  type1
+  type2
+}
+
+enum GlucoseSource {
+  cgm
+  manual
+}
+
+enum LifeEventType {
+  meal
+  activity
+  stress
+  medication
+  sleep
+  symptom
+}
+
+enum AnalysisStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum ReportStatus {
+  draft
+  final
+  archived
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AlertStatus {
+  active
+  acknowledged
+  resolved
+}
+
+enum MessageRole {
+  user
+  assistant
+}
+
+enum TaskStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+  very_high
+}
+
+// ─── Core Identity ─────────────────────────────────────
+
 model Patient {
   id           String         @id @default(cuid())
   name         String
   email        String         @unique
-  diabetesType String
+  diabetesType DiabetesType
   passwordHash String?
   clinicianId  String?
   clinician    Clinician?     @relation(fields: [clinicianId], references: [id])
-  readings     GlucoseReading[]
-  events       LifeEvent[]
-  patterns     Pattern[]
-  briefs       Brief[]        @relation("PatientBriefs")
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+
+  readings        GlucoseReading[]
+  events          LifeEvent[]
+  labResults      LabResult[]
+  medications     Medication[]
+  conversations   Conversation[]
+  analyses        ClinicalAnalysis[]
+  riskAssessments RiskAssessment[]
+  reports         ClinicalReport[] @relation("PatientReports")
+  alerts          Alert[]
+  tasks           TaskTracker[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([clinicianId])
+  @@index([email])
 }
 
 model Clinician {
@@ -30,60 +107,236 @@ model Clinician {
   name         String
   email        String      @unique
   passwordHash String?
+  specialty    String?
   patients     Patient[]
-  briefs       Brief[]     @relation("ClinicianBriefs")
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  reports      ClinicalReport[] @relation("ClinicianReports")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
 }
 
+// ─── Patient Data (Raw Input) ─────────────────────────
+
 model GlucoseReading {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   patientId String
-  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient   Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
   value     Int
   timestamp DateTime
-  source    String
+  source    GlucoseSource @default(cgm)
 
-  @@index([patientId, timestamp])
+  createdAt DateTime @default(now())
+
+  @@index([patientId, timestamp(sort: Desc)])
+  @@index([timestamp])
 }
 
 model LifeEvent {
-  id        String   @id @default(cuid())
+  id        String         @id @default(cuid())
   patientId String
-  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  type      String
+  patient   Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  type      LifeEventType
   timestamp DateTime
   metadata  Json
 
-  @@index([patientId, timestamp])
+  createdAt DateTime @default(now())
+
+  @@index([patientId, timestamp(sort: Desc)])
   @@index([patientId, type])
 }
 
-model Pattern {
-  id               String   @id @default(cuid())
-  patientId        String
-  patient          Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  summary          String
-  confidence       Float
-  triggerEventType String
-  detectedAt       DateTime @default(now())
-  status           String   @default("new")
+model LabResult {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name      String
+  value     Float
+  unit      String?
+  date      DateTime
 
-  @@index([patientId, status])
-  @@index([patientId, detectedAt])
+  createdAt DateTime @default(now())
+
+  @@index([patientId, date(sort: Desc)])
 }
 
-model Brief {
-  id          String   @id @default(cuid())
-  patientId   String
-  patient     Patient  @relation("PatientBriefs", fields: [patientId], references: [id], onDelete: Cascade)
-  clinicianId String
-  clinician   Clinician @relation("ClinicianBriefs", fields: [clinicianId], references: [id])
-  content     Json
+model Medication {
+  id        String    @id @default(cuid())
+  patientId String
+  patient   Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name      String
+  dosage    String?
+  frequency String?
+  startDate DateTime
+  endDate   DateTime?
+  active    Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([patientId, active])
+}
+
+// ─── Clinical Intelligence (AI Analysis) ──────────────
+
+model ClinicalAnalysis {
+  id        String        @id @default(cuid())
+  patientId String
+  patient   Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  status    AnalysisStatus @default(pending)
+
   periodStart DateTime
   periodEnd   DateTime
-  generatedAt DateTime @default(now())
 
-  @@index([patientId, clinicianId])
-  @@index([generatedAt])
+  patterns        Json
+  risks           Json
+  recommendations Json
+  observations    Json
+
+  stats Json
+
+  modelVersion String?
+  generatedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([patientId, generatedAt(sort: Desc)])
+  @@index([patientId, status])
+}
+
+model RiskAssessment {
+  id        String    @id @default(cuid())
+  patientId String
+  patient   Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  hyperglycemiaRisk Float
+  hypoglycemiaRisk  Float
+  adherenceScore    Float
+  lifestyleScore    Float
+  overallRisk       RiskLevel
+
+  details   Json?
+  assessedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([patientId, assessedAt(sort: Desc)])
+  @@index([overallRisk])
+}
+
+model ClinicalReport {
+  id          String       @id @default(cuid())
+  patientId   String
+  patient     Patient      @relation("PatientReports", fields: [patientId], references: [id], onDelete: Cascade)
+  clinicianId String
+  clinician   Clinician    @relation("ClinicianReports", fields: [clinicianId], references: [id])
+
+  status      ReportStatus @default(draft)
+  summary     Json
+  periodStart DateTime
+  periodEnd   DateTime
+  version     Int          @default(1)
+
+  signedByAi  Boolean      @default(false)
+  generatedAt DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([patientId, generatedAt(sort: Desc)])
+  @@index([clinicianId, generatedAt(sort: Desc)])
+  @@index([status])
+}
+
+// ─── Alerts ───────────────────────────────────────────
+
+model Alert {
+  id        String        @id @default(cuid())
+  patientId String
+  patient   Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  title     String
+  message   String
+  severity  AlertSeverity
+  status    AlertStatus   @default(active)
+
+  sourceType String
+  sourceId   String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  resolvedAt DateTime?
+
+  @@index([patientId, status])
+  @@index([severity, status])
+  @@index([createdAt(sort: Desc)])
+}
+
+// ─── Conversation (Patient ↔ AI Agent) ────────────────
+
+model Conversation {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages ChatMessage[]
+
+  @@index([patientId, updatedAt(sort: Desc)])
+}
+
+model ChatMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role     MessageRole
+  content  String
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ─── Async Task Tracking ──────────────────────────────
+
+model TaskTracker {
+  id        String     @id @default(cuid())
+  patientId String
+  patient   Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  type      String
+  status    TaskStatus @default(pending)
+  progress  Int        @default(0)
+
+  input     Json?
+  output    Json?
+  error     String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  completedAt DateTime?
+
+  @@index([patientId, status])
+  @@index([status, createdAt])
+}
+
+// ─── Audit Log ────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  userRole   String
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([resource, resourceId])
+  @@index([createdAt(sort: Desc)])
 }

@@ -6,11 +6,17 @@ import { ClinicianModule } from "./clinician/clinician.module";
 import { IngestionModule } from "./ingestion/ingestion.module";
 import { TwinModule } from "./twin/twin.module";
 import { AgentOrchestrationModule } from "./agent-orchestration/agent-orchestration.module";
-import { PatternModule } from "./pattern/pattern.module";
-import { BriefModule } from "./brief/brief.module";
+import { ClinicalAnalysisModule } from "./clinical-analysis/clinical-analysis.module";
+import { ClinicalReportModule } from "./clinical-report/clinical-report.module";
 import { AlertModule } from "./alert/alert.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthModule } from "./health/health.module";
+import { ChatModule } from "./chat/chat.module";
+import { GlucoseModule } from "./glucose/glucose.module";
+import { EventsModule } from "./events/events.module";
+import { TaskTrackerModule } from "./task-tracker/task-tracker.module";
+import { RagModule } from "./rag/rag.module";
+import { QueueModule } from "./queue/queue.module";
 
 @Module({
   imports: [
@@ -22,10 +28,16 @@ import { HealthModule } from "./health/health.module";
     IngestionModule,
     TwinModule,
     AgentOrchestrationModule,
-    PatternModule,
-    BriefModule,
+    ClinicalAnalysisModule,
+    ClinicalReportModule,
     AlertModule,
     HealthModule,
+    ChatModule,
+    GlucoseModule,
+    EventsModule,
+    TaskTrackerModule,
+    RagModule,
+    QueueModule,
   ],
 })
 export class AppModule {}

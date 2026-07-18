@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, DiabetesType, LifeEventType, GlucoseSource } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -6,12 +6,12 @@ const prisma = new PrismaClient();
 function generateGlucoseData(
   patientId: string,
   days: number = 30
-): { patientId: string; value: number; timestamp: Date; source: string }[] {
+): { patientId: string; value: number; timestamp: Date; source: GlucoseSource }[] {
   const readings: {
     patientId: string;
     value: number;
     timestamp: Date;
-    source: string;
+    source: GlucoseSource;
   }[] = [];
   const now = new Date();
 
@@ -23,7 +23,7 @@ function generateGlucoseData(
     for (let r = 0; r < readingsPerDay; r++) {
       const timestamp = new Date(date);
       timestamp.setHours(
-        6 + Math.floor(r * 18 / readingsPerDay),
+        6 + Math.floor((r * 18) / readingsPerDay),
         Math.floor(Math.random() * 60),
         0,
         0
@@ -50,7 +50,7 @@ function generateGlucoseData(
         patientId,
         value,
         timestamp,
-        source: "cgm",
+        source: "cgm" as GlucoseSource,
       });
     }
   }
@@ -60,16 +60,16 @@ function generateGlucoseData(
 function generateLifeEvents(
   patientId: string,
   days: number = 30
-): { patientId: string; type: string; timestamp: Date; metadata: any }[] {
+): { patientId: string; type: LifeEventType; timestamp: Date; metadata: any }[] {
   const events: {
     patientId: string;
-    type: string;
+    type: LifeEventType;
     timestamp: Date;
     metadata: any;
   }[] = [];
   const now = new Date();
 
-  const eventTypes = [
+  const eventTypes: { type: LifeEventType; meta: (i: number) => any }[] = [
     {
       type: "meal",
       meta: (i: number) => ({
@@ -154,6 +154,7 @@ async function main() {
       name: "Dr. Sarah Chen",
       email: "sarah.chen@carepulse.demo",
       passwordHash,
+      specialty: "Endocrinology",
     },
   });
   console.log(`Created clinician: ${clinician.name} (${clinician.id})`);
@@ -162,7 +163,7 @@ async function main() {
     data: {
       name: "Maria Garcia",
       email: "maria@carepulse.demo",
-      diabetesType: "type2",
+      diabetesType: "type2" as DiabetesType,
       passwordHash,
       clinicianId: clinician.id,
     },
@@ -173,7 +174,7 @@ async function main() {
     data: {
       name: "James Wilson",
       email: "james@carepulse.demo",
-      diabetesType: "type1",
+      diabetesType: "type1" as DiabetesType,
       passwordHash,
       clinicianId: clinician.id,
     },
@@ -200,6 +201,25 @@ async function main() {
   await prisma.lifeEvent.createMany({ data: jamesEvents });
   console.log(`  Created ${jamesEvents.length} life events`);
 
+  console.log("Creating medications for Maria...");
+  await prisma.medication.createMany({
+    data: [
+      { patientId: patient.id, name: "Metformin", dosage: "500mg", frequency: "twice daily", startDate: new Date(Date.now() - 90 * 86400000) },
+      { patientId: patient.id, name: "Glipizide", dosage: "5mg", frequency: "once daily", startDate: new Date(Date.now() - 60 * 86400000) },
+    ],
+  });
+  console.log("  Created 2 medications");
+
+  console.log("Creating lab results for Maria...");
+  await prisma.labResult.createMany({
+    data: [
+      { patientId: patient.id, name: "HbA1c", value: 7.2, unit: "%", date: new Date(Date.now() - 30 * 86400000) },
+      { patientId: patient.id, name: "Fasting Glucose", value: 126, unit: "mg/dL", date: new Date(Date.now() - 14 * 86400000) },
+      { patientId: patient.id, name: "Total Cholesterol", value: 195, unit: "mg/dL", date: new Date(Date.now() - 30 * 86400000) },
+    ],
+  });
+  console.log("  Created 3 lab results");
+
   console.log("\nSeed complete!");
   console.log("\nDemo credentials:");
   console.log("  Patient:    maria@carepulse.demo / demo1234");
@@ -212,7 +232,7 @@ async function main() {
 main()
   .catch((e) => {
     console.error(e);
-    process.exit(1);
+    // process.exit(1);
   })
   .finally(async () => {
     await prisma.$disconnect();

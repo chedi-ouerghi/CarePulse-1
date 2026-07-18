@@ -6,6 +6,7 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { Logger } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
 
 @WebSocketGateway({
   cors: {
@@ -22,18 +23,41 @@ export class AlertGateway
   private readonly logger = new Logger(AlertGateway.name);
   private readonly patientSockets = new Map<string, Set<string>>();
 
+  constructor(private readonly jwtService: JwtService) {}
+
   handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id}`);
-    const patientId = client.handshake.query.patientId as string;
-    if (patientId) {
+    const token =
+      client.handshake.auth?.token ||
+      client.handshake.query?.token as string;
+
+    if (!token) {
+      this.logger.warn(`Client ${client.id} rejected: no token`);
+      client.disconnect();
+      return;
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      const patientId = payload.sub as string;
+      if (!patientId) {
+        this.logger.warn(`Client ${client.id} rejected: invalid token payload`);
+        client.disconnect();
+        return;
+      }
+      (client as any).userId = payload.sub;
+      (client as any).userRole = payload.role;
+
       if (!this.patientSockets.has(patientId)) {
         this.patientSockets.set(patientId, new Set());
       }
       this.patientSockets.get(patientId)!.add(client.id);
       client.join(`patient:${patientId}`);
       this.logger.log(
-        `Client ${client.id} joined room patient:${patientId}`
+        `Client ${client.id} authenticated and joined room patient:${patientId}`
       );
+    } catch (err) {
+      this.logger.warn(`Client ${client.id} rejected: invalid token`);
+      client.disconnect();
     }
   }
 

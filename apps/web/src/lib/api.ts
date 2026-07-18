@@ -1,5 +1,17 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: "patient" | "clinician";
+}
+
+export interface AuthResponse {
+  access_token: string;
+  user: AuthUser;
+}
+
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -32,7 +44,7 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: "Request failed" }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+      throw new Error(error.error || error.message || `HTTP ${response.status}`);
     }
 
     return response.json();
@@ -95,6 +107,25 @@ class ApiClient {
 export const api = new ApiClient(API_URL);
 
 export const queries = {
+  auth: {
+    loginPatient: (email: string, password: string) =>
+      api.post<AuthResponse>("/auth/login/patient", { email, password }),
+    loginClinician: (email: string, password: string) =>
+      api.post<AuthResponse>("/auth/login/clinician", { email, password }),
+    registerPatient: (data: {
+      name: string;
+      email: string;
+      password: string;
+      diabetesType: string;
+    }) => api.post<AuthResponse>("/auth/register/patient", data),
+    registerClinician: (data: {
+      name: string;
+      email: string;
+      password: string;
+      specialty?: string;
+    }) => api.post<AuthResponse>("/auth/register/clinician", data),
+    me: () => api.get<{ id: string; email: string; role: string }>("/auth/me"),
+  },
   patients: {
     list: () => api.get<any[]>("/patients"),
     get: (id: string) => api.get<any>(`/patients/${id}`),
@@ -108,44 +139,51 @@ export const queries = {
     get: (patientId: string, days?: number) =>
       api.get<any>(`/twin/${patientId}${days ? `?days=${days}` : ""}`),
   },
-  patterns: {
-    listByPatient: (patientId: string) =>
-      api.get<any[]>(`/patterns/patient/${patientId}`),
-    get: (id: string) => api.get<any>(`/patterns/${id}`),
-    updateStatus: (id: string, status: string) =>
-      api.patch<any>(`/patterns/${id}/status`, { status }),
-  },
-  briefs: {
-    listByPatient: (patientId: string) =>
-      api.get<any[]>(`/briefs/patient/${patientId}`),
-    getLatest: (patientId: string) =>
-      api.get<any>(`/briefs/patient/${patientId}/latest`),
-    get: (id: string) => api.get<any>(`/briefs/${id}`),
-  },
   agents: {
-    runDataSteward: (patientId: string) =>
-      api.post<any>(`/agents/data-steward/${patientId}`),
-    runPattern: (patientId: string) =>
-      api.post<any>(`/agents/pattern/${patientId}`),
-    runCoach: (patientId: string, patternId?: string) =>
+    runAnalysis: (patientId: string, periodDays?: number) =>
       api.post<any>(
-        `/agents/coach/${patientId}${patternId ? `?patternId=${patternId}` : ""}`
+        `/agents/analysis/${patientId}${periodDays ? `?periodDays=${periodDays}` : ""}`
       ),
-    runBrief: (patientId: string, periodDays?: number) =>
+    runBrief: (patientId: string, clinicianId?: string, periodDays?: number) =>
       api.post<any>(
-        `/agents/brief/${patientId}${periodDays ? `?periodDays=${periodDays}` : ""}`
+        `/agents/brief/${patientId}${periodDays ? `?periodDays=${periodDays}` : ""}`,
+        clinicianId ? { clinicianId } : undefined
       ),
+    runRisk: (patientId: string) =>
+      api.post<any>(`/agents/risk/${patientId}`),
+    predictReadmission: (payload: Record<string, unknown>) =>
+      api.post<any>(`/agents/doctor/readmission/predict`, payload),
+    batchPredictReadmission: (patients: Record<string, unknown>[]) =>
+      api.post<any>(`/agents/doctor/readmission/batch`, { patients }),
   },
   ingestion: {
     upload: (patientId: string, file: File, fileType: string) =>
       api.upload<any>(`/ingestion/upload/${patientId}`, file, fileType),
   },
-  auth: {
-    loginPatient: (email: string, password: string) =>
-      api.post<any>("/auth/login/patient", { email, password }),
-    loginClinician: (email: string, password: string) =>
-      api.post<any>("/auth/login/clinician", { email, password }),
-    register: (data: any) => api.post<any>("/auth/register/patient", data),
-    me: () => api.get<any>("/auth/me"),
+  chat: {
+    getConversations: (patientId: string) =>
+      api.get<any[]>(`/chat/conversations/${patientId}`),
+    getMessages: (conversationId: string) =>
+      api.get<any[]>(`/chat/messages/${conversationId}`),
+    send: (patientId: string, content: string, conversationId?: string) =>
+      api.post<any>("/chat/send", { patientId, content, conversationId }),
+  },
+  analyses: {
+    listByPatient: (patientId: string) =>
+      api.get<any[]>(`/analyses/patient/${patientId}`),
+    getLatest: (patientId: string) =>
+      api.get<any>(`/analyses/patient/${patientId}/latest`),
+    create: (patientId: string, periodDays?: number) =>
+      api.post<any>(`/agents/analysis/${patientId}${periodDays ? `?periodDays=${periodDays}` : ""}`),
+  },
+  reports: {
+    listByPatient: (patientId: string) =>
+      api.get<any[]>(`/reports/patient/${patientId}`),
+    getLatest: (patientId: string) =>
+      api.get<any>(`/reports/patient/${patientId}/latest`),
+  },
+  riskAssessments: {
+    generate: (patientId: string) =>
+      api.post<any>(`/agents/risk/${patientId}`),
   },
 };

@@ -1,30 +1,34 @@
 import { z } from "zod";
 
-export const PatternStatusEnum = z.enum([
-  "new",
-  "acknowledged",
-  "shared_with_clinician",
-]);
-export type PatternStatus = z.infer<typeof PatternStatusEnum>;
+export const AnalysisStatusEnum = z.enum(["pending", "completed", "failed"]);
+export type AnalysisStatus = z.infer<typeof AnalysisStatusEnum>;
 
-export const PatternSchema = z.object({
+export const ClinicalAnalysisSchema = z.object({
   id: z.string(),
   patientId: z.string(),
-  summary: z.string(),
-  confidence: z.number().min(0).max(1),
-  triggerEventType: z.string(),
-  detectedAt: z.string().datetime(),
-  status: PatternStatusEnum,
-  supportingDataPoints: z.array(z.string()).optional(),
+  status: AnalysisStatusEnum,
+  periodStart: z.string().datetime(),
+  periodEnd: z.string().datetime(),
+  patterns: z.array(z.any()),
+  risks: z.array(z.any()),
+  recommendations: z.array(z.any()),
+  observations: z.array(z.any()),
+  stats: z.any(),
+  modelVersion: z.string().nullable().optional(),
+  generatedAt: z.string().datetime(),
 });
 
-export type Pattern = z.infer<typeof PatternSchema>;
+export type ClinicalAnalysis = z.infer<typeof ClinicalAnalysisSchema>;
 
-export const PatternCreateSchema = z.object({
-  summary: z.string(),
-  confidence: z.number().min(0).max(1),
-  triggerEventType: z.string(),
-  supportingDataPoints: z.array(z.string()).default([]),
+export const ClinicalAnalysisCreateSchema = z.object({
+  periodStart: z.string().datetime(),
+  periodEnd: z.string().datetime(),
+  patterns: z.array(z.any()),
+  risks: z.array(z.any()),
+  recommendations: z.array(z.any()),
+  observations: z.array(z.any()),
+  stats: z.any(),
+  modelVersion: z.string().optional(),
 });
 
-export type PatternCreate = z.infer<typeof PatternCreateSchema>;
+export type ClinicalAnalysisCreate = z.infer<typeof ClinicalAnalysisCreateSchema>;

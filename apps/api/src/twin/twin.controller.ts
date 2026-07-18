@@ -1,6 +1,8 @@
-import { Controller, Get, Param, Query } from "@nestjs/common";
+import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
 import { TwinService } from "./twin.service";
+import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 
+@UseGuards(JwtAuthGuard)
 @Controller("twin")
 export class TwinController {
   constructor(private readonly twinService: TwinService) {}

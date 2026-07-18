@@ -6,10 +6,13 @@ import {
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  UseGuards,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { IngestionService } from "./ingestion.service";
+import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 
+@UseGuards(JwtAuthGuard)
 @Controller("ingestion")
 export class IngestionController {
   constructor(private readonly ingestionService: IngestionService) {}

@@ -5,7 +5,7 @@ import { io, Socket } from "socket.io-client";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
 
-export function useSocket(patientId: string | null) {
+export function useSocket(patientId: string | null, token?: string | null) {
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<{
@@ -14,10 +14,10 @@ export function useSocket(patientId: string | null) {
   } | null>(null);
 
   useEffect(() => {
-    if (!patientId) return;
+    if (!patientId || !token) return;
 
     const socket = io(WS_URL, {
-      query: { patientId },
+      auth: { token },
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 5,
@@ -29,23 +29,23 @@ export function useSocket(patientId: string | null) {
     socket.on("connect", () => setIsConnected(true));
     socket.on("disconnect", () => setIsConnected(false));
 
-    socket.on("pattern_detected", (payload) => {
-      setLastEvent({ event: "pattern_detected", payload });
+    socket.on("alert", (payload) => {
+      setLastEvent({ event: "alert", payload });
     });
 
-    socket.on("coach_message", (payload) => {
-      setLastEvent({ event: "coach_message", payload });
+    socket.on("risk_alert", (payload) => {
+      setLastEvent({ event: "risk_alert", payload });
     });
 
-    socket.on("brief_generated", (payload) => {
-      setLastEvent({ event: "brief_generated", payload });
+    socket.on("clinical_report", (payload) => {
+      setLastEvent({ event: "clinical_report", payload });
     });
 
     return () => {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [patientId]);
+  }, [patientId, token]);
 
   const subscribe = useCallback(
     (event: string, handler: (payload: any) => void) => {

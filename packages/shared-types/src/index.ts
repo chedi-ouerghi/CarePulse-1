@@ -9,3 +9,6 @@ export * from "./brief";
 export * from "./twin";
 export * from "./agent";
 export * from "./api";
+export * from "./auth";
+export * from "./chat";
+export * from "./risk-assessment";

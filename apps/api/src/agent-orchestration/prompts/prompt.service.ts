@@ -2,14 +2,25 @@ import { Injectable, Logger } from "@nestjs/common";
 import * as fs from "fs";
 import * as path from "path";
 
-const PROMPTS_DIR = path.join(__dirname, "files");
+function resolvePromptsDir(): string {
+  const candidates = [
+    path.join(__dirname, "files"),
+    path.join(__dirname, "..", "..", "..", "src", "agent-orchestration", "prompts", "files"),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return candidates[0];
+}
 
 @Injectable()
 export class PromptService {
   private readonly logger = new Logger(PromptService.name);
   private readonly prompts = new Map<string, string>();
+  private readonly promptsDir: string;
 
   constructor() {
+    this.promptsDir = resolvePromptsDir();
     this.loadPrompts();
   }
 
@@ -22,7 +33,7 @@ export class PromptService {
     ];
 
     for (const name of promptNames) {
-      const filePath = path.join(PROMPTS_DIR, `${name}.md`);
+      const filePath = path.join(this.promptsDir, `${name}.md`);
       try {
         if (fs.existsSync(filePath)) {
           this.prompts.set(name, fs.readFileSync(filePath, "utf-8"));

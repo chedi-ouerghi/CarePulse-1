@@ -1,22 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { AnthropicService } from "./anthropic/anthropic.service";
+import { MistralAiService } from "./mistral-ai/mistral-ai.service";
 import { PromptService } from "./prompts/prompt.service";
 import { TwinService } from "../twin/twin.service";
-import { PatternService } from "../pattern/pattern.service";
+import { ClinicalAnalysisService } from "../clinical-analysis/clinical-analysis.service";
+import { ClinicalReportService } from "../clinical-report/clinical-report.service";
 import { PrismaService } from "../prisma/prisma.service";
-import {
-  DataStewardOutput,
-  PatternAgentOutput,
-  CoachMessage,
-  BriefAgentOutput,
-} from "@carepulse/shared-types";
-import {
-  DataStewardOutputSchema,
-  PatternAgentOutputSchema,
-  CoachMessageSchema,
-  BriefAgentOutputSchema,
-} from "@carepulse/shared-types";
-import { ZodSchema } from "zod";
+import { TaskTrackerService } from "../task-tracker/task-tracker.service";
 
 export interface AgentRunResult<T = unknown> {
   agent: string;
@@ -31,62 +20,28 @@ export class AgentOrchestrationService {
   private readonly logger = new Logger(AgentOrchestrationService.name);
 
   constructor(
-    private anthropic: AnthropicService,
+    private mistralAi: MistralAiService,
     private prompts: PromptService,
     private twinService: TwinService,
-    private patternService: PatternService,
-    private prisma: PrismaService
+    private analysisService: ClinicalAnalysisService,
+    private reportService: ClinicalReportService,
+    private prisma: PrismaService,
+    private taskTracker: TaskTrackerService
   ) {}
 
-  async runDataSteward(
-    patientId: string
-  ): Promise<AgentRunResult<DataStewardOutput>> {
+  async runClinicalAnalysis(
+    patientId: string,
+    periodDays: number = 14
+  ): Promise<AgentRunResult<any>> {
+    const task = await this.taskTracker.create(patientId, "clinical_analysis", { periodDays });
     const start = Date.now();
     try {
-      const twin = await this.twinService.buildTwinState(patientId);
+      const since = new Date();
+      since.setDate(since.getDate() - periodDays);
+      const now = new Date();
 
-      const userMessage = JSON.stringify({
-        readings: twin.cleanedReadings,
-        gaps: twin.gapsDetected,
-        stats: twin.stats,
-      });
-
-      if (!this.anthropic.isAvailable) {
-        return this.mockDataSteward(twin, start);
-      }
-
-      const raw = await this.anthropic.createMessage(
-        this.prompts.getPrompt("data-steward"),
-        userMessage
-      );
-
-      const parsed = this.parseAndValidate(DataStewardOutputSchema, raw);
-      return {
-        agent: "data_steward",
-        success: true,
-        data: parsed as DataStewardOutput,
-        latencyMs: Date.now() - start,
-      };
-    } catch (err) {
-      this.logger.error(`Data Steward failed: ${err}`);
-      return {
-        agent: "data_steward",
-        success: false,
-        data: null,
-        error: err instanceof Error ? err.message : "Unknown error",
-        latencyMs: Date.now() - start,
-      };
-    }
-  }
-
-  async runPatternAgent(
-    patientId: string
-  ): Promise<AgentRunResult<PatternAgentOutput>> {
-    const start = Date.now();
-    try {
-      const twin = await this.twinService.buildTwinState(patientId);
-      const existingPatterns =
-        await this.patternService.findByPatient(patientId);
+      const twin = await this.twinService.buildTwinState(patientId, periodDays);
+      const existingAnalyses = await this.analysisService.findByPatient(patientId);
 
       const userMessage = JSON.stringify({
         twinState: {
@@ -94,126 +49,64 @@ export class AgentOrchestrationService {
           gaps: twin.gapsDetected,
           readingCount: twin.cleanedReadings.length,
         },
-        recentReadings: twin.cleanedReadings.slice(-100),
-        existingPatterns: existingPatterns.map((p) => ({
-          summary: p.summary,
-          triggerEventType: p.triggerEventType,
-          detectedAt: p.detectedAt,
+        recentReadings: twin.cleanedReadings.slice(-200),
+        previousAnalyses: existingAnalyses.slice(0, 3).map((a) => ({
+          patterns: a.patterns,
+          risks: a.risks,
+          generatedAt: a.generatedAt,
         })),
       });
 
-      if (!this.anthropic.isAvailable) {
-        return this.mockPatternAgent(patientId, start);
+      if (!this.mistralAi.isAvailable) {
+        const result = await this.mockAnalysis(patientId, twin, start, since, now);
+        await this.taskTracker.updateStatus(task.id, "completed", result);
+        return result;
       }
 
-      const raw = await this.anthropic.createMessage(
+      const raw = await this.mistralAi.createMessage(
         this.prompts.getPrompt("pattern-agent"),
         userMessage
       );
 
-      const parsed = this.parseAndValidate(
-        PatternAgentOutputSchema,
-        raw
-      ) as PatternAgentOutput;
-
-      if (parsed) {
-        for (const p of parsed.patterns) {
-          if (p.confidence >= 0.6) {
-            await this.patternService.create(patientId, {
-              summary: p.summary,
-              confidence: p.confidence,
-              triggerEventType: p.triggerEventType,
-              supportingDataPoints: p.supportingDataPoints,
-            });
-          }
-        }
-      }
-
-      return {
-        agent: "pattern_agent",
-        success: true,
-        data: parsed,
-        latencyMs: Date.now() - start,
-      };
-    } catch (err) {
-      this.logger.error(`Pattern Agent failed: ${err}`);
-      return {
-        agent: "pattern_agent",
-        success: false,
-        data: null,
-        error: err instanceof Error ? err.message : "Unknown error",
-        latencyMs: Date.now() - start,
-      };
-    }
-  }
-
-  async runCoachAgent(
-    patientId: string,
-    patternId?: string
-  ): Promise<AgentRunResult<CoachMessage>> {
-    const start = Date.now();
-    try {
-      let pattern: any = null;
-      if (patternId) {
-        pattern = await this.patternService.findById(patternId);
-      } else {
-        const patterns = await this.patternService.findByPatient(patientId);
-        pattern = patterns.length > 0 ? patterns[0] : null;
-      }
-
-      if (!pattern) {
-        return {
-          agent: "coach",
-          success: true,
-          data: {
-            message:
-              "No patterns detected yet. Keep logging your data and I'll let you know when I notice something!",
-            tone: "supportive",
-            suggestedAction: null,
-          },
-          latencyMs: Date.now() - start,
+      let parsed: any;
+      try {
+        let jsonStr = raw;
+        const jsonMatch = raw.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) jsonStr = jsonMatch[1];
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        parsed = {
+          patterns: [{ summary: raw.slice(0, 500), confidence: 0.5, triggerEventType: "unknown" }],
+          risks: [{ type: "general", level: "medium", description: "Needs review" }],
+          recommendations: ["Consult healthcare provider"],
+          observations: [raw.slice(0, 200)],
         };
       }
 
-      const patient = await this.prisma.patient.findUnique({
-        where: { id: patientId },
+      const analysis = await this.analysisService.create(patientId, {
+        periodStart: since,
+        periodEnd: now,
+        patterns: parsed.patterns || [],
+        risks: parsed.risks || [],
+        recommendations: parsed.recommendations || [],
+        observations: parsed.observations || [],
+        stats: twin.stats,
+        modelVersion: this.mistralAi.isAvailable ? "mistral-small-latest" : "mock",
       });
 
-      const userMessage = JSON.stringify({
-        pattern: {
-          summary: pattern.summary,
-          confidence: pattern.confidence,
-          triggerEventType: pattern.triggerEventType,
-        },
-        patientProfile: {
-          diabetesType: patient?.diabetesType,
-          name: "[redacted]",
-        },
-      });
+      await this.taskTracker.updateStatus(task.id, "completed", analysis);
 
-      if (!this.anthropic.isAvailable) {
-        return this.mockCoachAgent(pattern, start);
-      }
-
-      const raw = await this.anthropic.createMessage(
-        this.prompts.getPrompt("coach-agent"),
-        userMessage
-      );
-
-      const parsed = this.parseAndValidate(
-        CoachMessageSchema,
-        raw
-      ) as CoachMessage;
       return {
-        agent: "coach",
+        agent: "clinical_analysis",
         success: true,
-        data: parsed,
+        data: analysis,
         latencyMs: Date.now() - start,
       };
     } catch (err) {
-      this.logger.error(`Coach Agent failed: ${err}`);
+      this.logger.error(`Clinical Analysis failed: ${err}`);
+      await this.taskTracker.updateStatus(task.id, "failed", null, err instanceof Error ? err.message : "Unknown error");
       return {
-        agent: "coach",
+        agent: "clinical_analysis",
         success: false,
         data: null,
         error: err instanceof Error ? err.message : "Unknown error",
@@ -222,55 +115,125 @@ export class AgentOrchestrationService {
     }
   }
 
-  async runCareCoordinatorAgent(
+  async runCareCoordinator(
     patientId: string,
+    clinicianId: string,
     periodDays: number = 90
-  ): Promise<AgentRunResult<BriefAgentOutput>> {
+  ): Promise<AgentRunResult<any>> {
+    const task = await this.taskTracker.create(patientId, "care_coordinator", { clinicianId, periodDays });
     const start = Date.now();
     try {
       const since = new Date();
       since.setDate(since.getDate() - periodDays);
+      const now = new Date();
 
-      const [patterns, twin] = await Promise.all([
-        this.patternService.findByPatient(patientId),
+      const [analyses, twin] = await Promise.all([
+        this.analysisService.findByPatient(patientId),
         this.twinService.buildTwinState(patientId, periodDays),
       ]);
 
+      const latestAnalysis = analyses[0];
+
+      const prevPatterns = (latestAnalysis?.patterns as any[]) || [];
+      const prevRisks = (latestAnalysis?.risks as any[]) || [];
+      const prevRecommendations = (latestAnalysis?.recommendations as any[]) || [];
+
       const userMessage = JSON.stringify({
-        patterns: patterns.map((p) => ({
-          summary: p.summary,
-          confidence: p.confidence,
-          triggerEventType: p.triggerEventType,
-          detectedAt: p.detectedAt,
-        })),
+        patterns: prevPatterns,
+        risks: prevRisks,
+        recommendations: prevRecommendations,
         stats: twin.stats,
-        period: {
-          start: since.toISOString(),
-          end: new Date().toISOString(),
-        },
+        period: { start: since.toISOString(), end: now.toISOString() },
       });
 
-      if (!this.anthropic.isAvailable) {
-        return this.mockCareCoordinator(patterns, twin, start);
+      let reportSummary: any;
+
+      if (!this.mistralAi.isAvailable) {
+        reportSummary = {
+          headline: "Clinical status review based on available data.",
+          keyFindings: prevPatterns.slice(0, 3).map((p: any) => ({
+            category: p.triggerEventType || "general",
+            finding: p.summary || "No details",
+          })),
+          statsSnapshot: {
+            timeInRange: twin.stats.timeInRange,
+            avgGlucose: twin.stats.avgGlucose,
+            hypoEvents: twin.stats.hypoEvents,
+            hyperEvents: twin.stats.hyperEvents || 0,
+          },
+          riskScores: {
+            hyperglycemia: 0.5,
+            hypoglycemia: 0.3,
+            adherence: 0.7,
+            lifestyle: 0.6,
+          },
+          recommendations: prevRecommendations.length > 0 ? prevRecommendations : ["Continue monitoring"],
+        };
+      } else {
+        const raw = await this.mistralAi.createMessage(
+          this.prompts.getPrompt("care-coordinator"),
+          userMessage
+        );
+
+        try {
+          let jsonStr = raw;
+          const jsonMatch = raw.match(/```json\s*([\s\S]*?)\s*```/);
+          if (jsonMatch) jsonStr = jsonMatch[1];
+          const parsed = JSON.parse(jsonStr);
+          reportSummary = {
+            headline: parsed.headline || "Clinical review",
+            keyFindings: (parsed.keyPatterns || []).map((p: any) => ({
+              category: p.triggerEventType || "general",
+              finding: p.summary || "",
+            })),
+            statsSnapshot: {
+              timeInRange: twin.stats.timeInRange,
+              avgGlucose: twin.stats.avgGlucose,
+              hypoEvents: twin.stats.hypoEvents,
+              hyperEvents: twin.stats.hyperEvents || 0,
+            },
+            riskScores: {
+              hyperglycemia: 0.5,
+              hypoglycemia: 0.3,
+              adherence: 0.7,
+              lifestyle: 0.6,
+            },
+            recommendations: parsed.suggestedDiscussionPoints || [],
+          };
+        } catch {
+          reportSummary = {
+            headline: raw.slice(0, 200),
+            keyFindings: [],
+            statsSnapshot: {
+              timeInRange: twin.stats.timeInRange,
+              avgGlucose: twin.stats.avgGlucose,
+              hypoEvents: twin.stats.hypoEvents,
+              hyperEvents: twin.stats.hyperEvents || 0,
+            },
+            riskScores: { hyperglycemia: 0.5, hypoglycemia: 0.3, adherence: 0.7, lifestyle: 0.6 },
+            recommendations: [],
+          };
+        }
       }
 
-      const raw = await this.anthropic.createMessage(
-        this.prompts.getPrompt("care-coordinator"),
-        userMessage
-      );
+      const report = await this.reportService.create(patientId, {
+        clinicianId,
+        summary: reportSummary,
+        periodStart: since,
+        periodEnd: now,
+      });
 
-      const parsed = this.parseAndValidate(
-        BriefAgentOutputSchema,
-        raw
-      ) as BriefAgentOutput;
+      await this.taskTracker.updateStatus(task.id, "completed", report);
+
       return {
         agent: "care_coordinator",
         success: true,
-        data: parsed,
+        data: report,
         latencyMs: Date.now() - start,
       };
     } catch (err) {
       this.logger.error(`Care Coordinator failed: ${err}`);
+      await this.taskTracker.updateStatus(task.id, "failed", null, err instanceof Error ? err.message : "Unknown error");
       return {
         agent: "care_coordinator",
         success: false,
@@ -281,109 +244,100 @@ export class AgentOrchestrationService {
     }
   }
 
-  private parseAndValidate<T>(schema: ZodSchema, raw: string): T {
-    let jsonStr = raw;
-    const jsonMatch = raw.match(/```json\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1];
-    }
-
+  async generateRiskAssessment(
+    patientId: string
+  ): Promise<AgentRunResult<any>> {
+    const task = await this.taskTracker.create(patientId, "risk_assessment", {});
+    const start = Date.now();
     try {
-      const obj = JSON.parse(jsonStr);
-      return schema.parse(obj) as T;
+      const twin = await this.twinService.buildTwinState(patientId, 14);
+      const stats = twin.stats;
+
+      const hyperRisk = stats.totalReadings > 0
+        ? Math.min(1, (stats.hyperEvents || 0) / stats.totalReadings * 5)
+        : 0;
+      const hypoRisk = stats.totalReadings > 0
+        ? Math.min(1, stats.hypoEvents / stats.totalReadings * 10)
+        : 0;
+      const adherence = stats.totalReadings > 0 ? Math.min(1, stats.totalReadings / (14 * 288)) : 0;
+      const lifestyle = stats.timeInRange;
+
+      const overallScore = (hyperRisk + hypoRisk + (1 - adherence) + (1 - lifestyle)) / 4;
+      const overallRisk = overallScore > 0.7 ? "high" : overallScore > 0.4 ? "medium" : "low";
+
+      const assessment = await this.prisma.riskAssessment.create({
+        data: {
+          patientId,
+          hyperglycemiaRisk: Number(hyperRisk.toFixed(3)),
+          hypoglycemiaRisk: Number(hypoRisk.toFixed(3)),
+          adherenceScore: Number(adherence.toFixed(3)),
+          lifestyleScore: Number(lifestyle.toFixed(3)),
+          overallRisk,
+          details: {
+            avgGlucose: stats.avgGlucose,
+            timeInRange: stats.timeInRange,
+            totalReadings: stats.totalReadings,
+          },
+        },
+      });
+
+      await this.taskTracker.updateStatus(task.id, "completed", assessment);
+
+      return {
+        agent: "risk_assessment",
+        success: true,
+        data: assessment,
+        latencyMs: Date.now() - start,
+      };
     } catch (err) {
-      this.logger.warn(`Parse/validate failed, using raw JSON`);
-      return JSON.parse(jsonStr) as T;
+      this.logger.error(`Risk Assessment failed: ${err}`);
+      await this.taskTracker.updateStatus(task.id, "failed", null, err instanceof Error ? err.message : "Unknown error");
+      return {
+        agent: "risk_assessment",
+        success: false,
+        data: null,
+        error: err instanceof Error ? err.message : "Unknown error",
+        latencyMs: Date.now() - start,
+      };
     }
   }
 
-  private mockDataSteward(
-    twin: any,
-    start: number
-  ): AgentRunResult<DataStewardOutput> {
-    return {
-      agent: "data_steward",
-      success: true,
-      data: {
-        cleanedReadings: twin.cleanedReadings.map((r: any) => ({
-          id: r.id,
-          value: r.value,
-          timestamp: r.timestamp,
-          source: r.source,
-          isAnomaly: r.isAnomaly || false,
-          anomalyReason: r.anomalyReason,
-        })),
-        gapsDetected: twin.gapsDetected,
-        dataQualityScore: twin.dataQualityScore,
-      },
-      latencyMs: Date.now() - start,
-    };
-  }
-
-  private mockPatternAgent(
+  private async mockAnalysis(
     patientId: string,
-    start: number
-  ): AgentRunResult<PatternAgentOutput> {
-    return {
-      agent: "pattern_agent",
-      success: true,
-      data: {
-        patterns: [
-          {
-            summary:
-              "Stressful evening events appear to be associated with glucose spikes approximately 2 hours later. This pattern has been observed in the last 3 occurrences.",
-            triggerEventType: "stress",
-            confidence: 0.78,
-            supportingDataPoints: ["mock_reading_1", "mock_event_1"],
-          },
-        ],
-      },
-      latencyMs: Date.now() - start,
-    };
-  }
-
-  private mockCoachAgent(
-    pattern: any,
-    start: number
-  ): AgentRunResult<CoachMessage> {
-    return {
-      agent: "coach",
-      success: true,
-      data: {
-        message: `It looks like ${pattern.triggerEventType} might be affecting your glucose levels a couple of hours later. Want me to give you a heads-up next time?`,
-        tone: "supportive",
-        suggestedAction: "enable_stress_heads_up_notification",
-      },
-      latencyMs: Date.now() - start,
-    };
-  }
-
-  private mockCareCoordinator(
-    patterns: any[],
     twin: any,
-    start: number
-  ): AgentRunResult<BriefAgentOutput> {
-    return {
-      agent: "care_coordinator",
-      success: true,
-      data: {
-        headline:
-          "Overall stable control; recurrent post-stress glycemic excursions to investigate.",
-        keyPatterns: patterns.slice(0, 3).map((p: any) => ({
-          summary: p.summary,
-          confidence: p.confidence,
-          triggerEventType: p.triggerEventType,
-        })),
-        statsSnapshot: {
-          timeInRange: twin.stats.timeInRange,
-          avgGlucose: twin.stats.avgGlucose,
-          hypoEvents: twin.stats.hypoEvents,
+    start: number,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<AgentRunResult<any>> {
+    const analysis = await this.analysisService.create(patientId, {
+      periodStart,
+      periodEnd,
+      patterns: [
+        {
+          summary: "Glucose spikes appear to follow stressful evening events, approximately 2h later.",
+          triggerEventType: "stress",
+          confidence: 0.78,
         },
-        suggestedDiscussionPoints: [
-          "Stress management strategies as complement to current regimen",
-          "Consider timing of glucose monitoring after reported stress events",
-        ],
-      },
+      ],
+      risks: [
+        { type: "hyperglycemia", level: "medium", description: "Frequent post-meal spikes detected" },
+      ],
+      recommendations: [
+        "Consider reviewing meal timing",
+        "Monitor glucose 2h after stressful events",
+      ],
+      observations: [
+        "Average glucose is within target range",
+        "Data completeness is good",
+      ],
+      stats: twin.stats,
+      modelVersion: "mock_v1",
+    });
+
+    return {
+      agent: "clinical_analysis",
+      success: true,
+      data: analysis,
       latencyMs: Date.now() - start,
     };
   }
