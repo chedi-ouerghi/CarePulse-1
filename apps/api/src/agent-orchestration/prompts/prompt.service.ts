@@ -6,6 +6,7 @@ function resolvePromptsDir(): string {
   const candidates = [
     path.join(__dirname, "files"),
     path.join(__dirname, "..", "..", "..", "src", "agent-orchestration", "prompts", "files"),
+    path.join(process.cwd(), "src", "agent-orchestration", "prompts", "files"),
   ];
   for (const dir of candidates) {
     if (fs.existsSync(dir)) return dir;

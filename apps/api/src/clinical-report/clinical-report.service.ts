@@ -8,7 +8,7 @@ export class ClinicalReportService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(patientId: string, data: {
-    clinicianId: string;
+    clinicianId?: string;
     summary: any;
     periodStart: Date;
     periodEnd: Date;
@@ -17,8 +17,8 @@ export class ClinicalReportService {
     this.logger.log(`Creating report for patient ${patientId}`);
     return this.prisma.clinicalReport.create({
       data: {
-        patientId,
-        clinicianId: data.clinicianId,
+        patient: { connect: { id: patientId } },
+        ...(data.clinicianId ? { clinician: { connect: { id: data.clinicianId } } } : {}),
         summary: data.summary,
         periodStart: data.periodStart,
         periodEnd: data.periodEnd,

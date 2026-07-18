@@ -8,8 +8,9 @@
     "assets": [
       {
         "include": "agent-orchestration/prompts/files/**",
-        "outDir": "dist/agent-orchestration/prompts/files"
+        "outDir": "./dist"
       }
-    ]
+    ],
+    "watchAssets": true
   }
 }

@@ -1,9 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useAuth } from "@/components/auth-context";
 import { useRouter } from "next/navigation";
-import { Heart, User, Stethoscope, Loader2, AlertCircle } from "lucide-react";
+import { User, Stethoscope, Loader2, AlertCircle } from "lucide-react";
 
 export default function SignInPage() {
   const { login } = useAuth();
@@ -13,9 +14,16 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isPending, setIsPending] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+  const emailError = touched.email && !email ? "Email is required" : "";
+  const passwordError = touched.password && !password ? "Password is required" : "";
+  const fieldError = emailError || passwordError;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setTouched({ email: true, password: true });
+    if (!email || !password) return;
     setError("");
     setIsPending(true);
     try {
@@ -33,9 +41,9 @@ export default function SignInPage() {
         <div className="mb-8 text-center">
           <button
             onClick={() => router.push("/")}
-            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-600 text-lg font-bold text-white shadow-lg"
+            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
           >
-            CP
+            <Image src="/logo.jpg" alt="CarePulse" width={48} height={48} className="object-contain" />
           </button>
           <h1 className="text-2xl font-bold text-gray-900">Welcome back</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -47,22 +55,20 @@ export default function SignInPage() {
           <div className="mb-6 flex rounded-lg bg-gray-100 p-1">
             <button
               onClick={() => setRole("patient")}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
-                role === "patient"
+              className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${role === "patient"
                   ? "bg-white text-primary-600 shadow-sm"
                   : "text-gray-500 hover:text-gray-700"
-              }`}
+                }`}
             >
               <User className="h-4 w-4" />
               Patient
             </button>
             <button
               onClick={() => setRole("clinician")}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
-                role === "clinician"
+              className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${role === "clinician"
                   ? "bg-white text-primary-600 shadow-sm"
                   : "text-gray-500 hover:text-gray-700"
-              }`}
+                }`}
             >
               <Stethoscope className="h-4 w-4" />
               Clinician
@@ -76,35 +82,45 @@ export default function SignInPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Email
-              </label>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">Email</label>
+                {emailError && <span className="text-xs text-danger-600">{emailError}</span>}
+              </div>
               <input
                 type="email"
                 required
                 value={email}
+                onBlur={() => setTouched((t) => ({ ...t, email: true }))}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={
                   role === "patient"
                     ? "maria@carepulse.demo"
                     : "sarah.chen@carepulse.demo"
                 }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className={`w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-1 ${emailError
+                    ? "border-danger-500 focus:border-danger-500 focus:ring-danger-500"
+                    : "border-gray-300 focus:border-primary-500 focus:ring-primary-500"
+                  }`}
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Password
-              </label>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">Password</label>
+                {passwordError && <span className="text-xs text-danger-600">{passwordError}</span>}
+              </div>
               <input
                 type="password"
                 required
                 value={password}
+                onBlur={() => setTouched((t) => ({ ...t, password: true }))}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className={`w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-1 ${passwordError
+                    ? "border-danger-500 focus:border-danger-500 focus:ring-danger-500"
+                    : "border-gray-300 focus:border-primary-500 focus:ring-primary-500"
+                  }`}
               />
             </div>
             <button
@@ -134,11 +150,6 @@ export default function SignInPage() {
           </p>
         </div>
 
-        <p className="mt-4 text-center text-xs text-gray-400">
-          Demo: maria@carepulse.demo / demo1234 (Patient)
-          <br />
-          sarah.chen@carepulse.demo / demo1234 (Clinician)
-        </p>
       </div>
     </div>
   );

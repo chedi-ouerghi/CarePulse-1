@@ -1,11 +1,11 @@
-import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { TwinService } from "./twin.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 
 @UseGuards(JwtAuthGuard)
 @Controller("twin")
 export class TwinController {
-  constructor(private readonly twinService: TwinService) {}
+  constructor(private readonly twinService: TwinService) { }
 
   @Get(":patientId")
   getTwinState(
@@ -14,5 +14,13 @@ export class TwinController {
   ) {
     const windowDays = days ? parseInt(days, 10) : 14;
     return this.twinService.buildTwinState(patientId, windowDays);
+  }
+
+  @Post("reading/:patientId")
+  recordDailyData(
+    @Param("patientId") patientId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.twinService.recordDailyData(patientId, body);
   }
 }

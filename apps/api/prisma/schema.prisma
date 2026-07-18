@@ -227,8 +227,8 @@ model ClinicalReport {
   id          String       @id @default(cuid())
   patientId   String
   patient     Patient      @relation("PatientReports", fields: [patientId], references: [id], onDelete: Cascade)
-  clinicianId String
-  clinician   Clinician    @relation("ClinicianReports", fields: [clinicianId], references: [id])
+  clinicianId String?
+  clinician   Clinician?   @relation("ClinicianReports", fields: [clinicianId], references: [id])
 
   status      ReportStatus @default(draft)
   summary     Json

@@ -138,6 +138,17 @@ export const queries = {
   twin: {
     get: (patientId: string, days?: number) =>
       api.get<any>(`/twin/${patientId}${days ? `?days=${days}` : ""}`),
+    record: (patientId: string, data: {
+      value?: number;
+      mealType?: string;
+      mealDescription?: string;
+      activityType?: string;
+      activityDuration?: number;
+      symptoms?: string[];
+      medications?: string;
+      mood?: string;
+      observations?: string;
+    }) => api.post<any>(`/twin/reading/${patientId}`, data),
   },
   agents: {
     runAnalysis: (patientId: string, periodDays?: number) =>
@@ -185,5 +196,14 @@ export const queries = {
   riskAssessments: {
     generate: (patientId: string) =>
       api.post<any>(`/agents/risk/${patientId}`),
+  },
+  alerts: {
+    list: () => api.get<any[]>("/alerts"),
+    listByPatient: (patientId: string) =>
+      api.get<any[]>(`/alerts/patient/${patientId}`),
+    acknowledge: (id: string) =>
+      api.patch<any>(`/alerts/${id}/acknowledge`),
+    resolve: (id: string) =>
+      api.patch<any>(`/alerts/${id}/resolve`),
   },
 };

@@ -9,6 +9,25 @@ import { MistralAiService } from "../agent-orchestration/mistral-ai/mistral-ai.s
 import { TwinService } from "../twin/twin.service";
 import { CHAT_SYSTEM_PROMPT } from "./chat.prompt";
 
+const DIABETES_KEYWORDS = [
+  "glucose", "glycémie", "sugar", "blood sugar", "insulin", "diabetes", "diabetic",
+  "meal", "food", "eat", "diet", "carb", "exercise", "activity", "walk", "sport",
+  "medication", "medicine", "drug", "dose", "symptom", "hypo", "hyper", "low blood",
+  "high blood", "a1c", "reading", "level", "trend", "pattern", "risk", "alert",
+  "sleep", "stress", "mood", "energy", "weight", "nutrition", "hydration", "water",
+  "doctor", "clinic", "appointment", "report", "analysis", "time in range", "tir",
+  "fasting", "post-meal", "bedtime", "dawn phenomenon", "foot", "nerve", "kidney",
+  "eye", "vision", "complication", "adherence", "lifestyle", "coach", "tip",
+  "recommendation", "insight", "health", "wellness", "care", "pulse", "carepulse",
+];
+
+function isDiabetesRelated(content: string): boolean {
+  const lower = content.toLowerCase();
+  return DIABETES_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+const OFF_TOPIC_RESPONSE = `I'm your diabetes care assistant, so I can only help with questions about your diabetes management. Is there something about your glucose levels, medications, meals, or activity I can help with?`;
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -85,14 +104,18 @@ export class ChatService {
 
     let assistantContent: string;
     try {
-      const clinicalContext = await this.buildClinicalContext(patientId);
-      const userContext = await this.buildUserContext(conversation.id);
+      if (!isDiabetesRelated(content)) {
+        assistantContent = OFF_TOPIC_RESPONSE;
+      } else {
+        const clinicalContext = await this.buildClinicalContext(patientId);
+        const userContext = await this.buildUserContext(conversation.id);
 
-      assistantContent = await this.mistralAi.createMessage(
-        CHAT_SYSTEM_PROMPT,
-        clinicalContext + "\n\n" + userContext + "\n\nPatient: " + content,
-        1024
-      );
+        assistantContent = await this.mistralAi.createMessage(
+          CHAT_SYSTEM_PROMPT,
+          clinicalContext + "\n\n" + userContext + "\n\nPatient: " + content,
+          1024
+        );
+      }
     } catch (error) {
       this.logger.error(`LLM call failed: ${error}`);
       throw new InternalServerErrorException("Failed to generate AI response");

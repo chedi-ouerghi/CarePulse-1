@@ -3,7 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class TwinService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async buildTwinState(patientId: string, days: number = 14) {
     const since = new Date();
@@ -48,6 +48,126 @@ export class TwinService {
       dataQualityScore: this.computeQualityScore(readings, gaps, days),
       stats,
       lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  async recordDailyData(
+    patientId: string,
+    data: {
+      value?: number;
+      mealType?: string;
+      mealDescription?: string;
+      activityType?: string;
+      activityDuration?: number;
+      symptoms?: string[];
+      medications?: string;
+      mood?: string;
+      observations?: string;
+    }
+  ) {
+    const patient = await this.prisma.patient.findUnique({
+      where: { id: patientId },
+    });
+    if (!patient) throw new NotFoundException(`Patient ${patientId} not found`);
+
+    const created: Array<{ kind: string; id: string }> = [];
+    const timestamp = new Date();
+
+    if (typeof data.value === "number" && Number.isFinite(data.value)) {
+      const reading = await this.prisma.glucoseReading.create({
+        data: {
+          patientId,
+          value: Math.round(data.value),
+          timestamp,
+          source: "manual",
+        },
+      });
+      created.push({ kind: "glucose", id: reading.id });
+    }
+
+    if (data.mealType || data.mealDescription) {
+      const event = await this.prisma.lifeEvent.create({
+        data: {
+          patientId,
+          type: "meal",
+          timestamp,
+          metadata: {
+            mealType: data.mealType || null,
+            mealDescription: data.mealDescription || null,
+            source: "manual",
+          },
+        },
+      });
+      created.push({ kind: "meal", id: event.id });
+    }
+
+    if (data.activityType || typeof data.activityDuration === "number") {
+      const event = await this.prisma.lifeEvent.create({
+        data: {
+          patientId,
+          type: "activity",
+          timestamp,
+          metadata: {
+            activityType: data.activityType || null,
+            activityDuration: data.activityDuration ?? null,
+            source: "manual",
+          },
+        },
+      });
+      created.push({ kind: "activity", id: event.id });
+    }
+
+    if (data.symptoms && data.symptoms.length > 0) {
+      const event = await this.prisma.lifeEvent.create({
+        data: {
+          patientId,
+          type: "symptom",
+          timestamp,
+          metadata: {
+            symptoms: data.symptoms,
+            source: "manual",
+          },
+        },
+      });
+      created.push({ kind: "symptom", id: event.id });
+    }
+
+    if (data.medications) {
+      const event = await this.prisma.lifeEvent.create({
+        data: {
+          patientId,
+          type: "medication",
+          timestamp,
+          metadata: {
+            medications: data.medications,
+            source: "manual",
+          },
+        },
+      });
+      created.push({ kind: "medication", id: event.id });
+    }
+
+    if (data.mood || data.observations) {
+      const event = await this.prisma.lifeEvent.create({
+        data: {
+          patientId,
+          type: "stress",
+          timestamp,
+          metadata: {
+            mood: data.mood || null,
+            observations: data.observations || null,
+            source: "manual",
+          },
+        },
+      });
+      created.push({ kind: "stress", id: event.id });
+    }
+
+    return {
+      patientId,
+      createdAt: timestamp.toISOString(),
+      createdRecords: created.length,
+      records: created,
     };
   }
 

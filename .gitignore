@@ -10,6 +10,10 @@ out/
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.*
+**/*.env
+**/*.local
 
 # Turbo
 .turbo/
@@ -28,6 +32,20 @@ apps/api/prisma/migrations/
 # Logs
 *.log
 npm-debug.log*
+*.out
+*.pid
 
 # Test coverage
 coverage/
+
+# TypeScript build info
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Internal documentation (do not publish)
+DOCUMENTATION.md
+PATIENT_WORKFLOW.md
+/docs/
+
+# Local generated folders
+apps/web/src/app/patient/log/
