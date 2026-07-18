@@ -1,0 +1,23 @@
+{
+  "name": "carepulse",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "db:push": "cd apps/api && npx prisma db push",
+    "db:seed": "cd apps/api && npx prisma db seed",
+    "db:generate": "cd apps/api && npx prisma generate"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "npm@10.0.0"
+}

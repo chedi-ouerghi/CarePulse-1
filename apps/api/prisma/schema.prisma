@@ -1,0 +1,89 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Patient {
+  id           String         @id @default(cuid())
+  name         String
+  email        String         @unique
+  diabetesType String
+  passwordHash String?
+  clinicianId  String?
+  clinician    Clinician?     @relation(fields: [clinicianId], references: [id])
+  readings     GlucoseReading[]
+  events       LifeEvent[]
+  patterns     Pattern[]
+  briefs       Brief[]        @relation("PatientBriefs")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([clinicianId])
+}
+
+model Clinician {
+  id           String      @id @default(cuid())
+  name         String
+  email        String      @unique
+  passwordHash String?
+  patients     Patient[]
+  briefs       Brief[]     @relation("ClinicianBriefs")
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model GlucoseReading {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  value     Int
+  timestamp DateTime
+  source    String
+
+  @@index([patientId, timestamp])
+}
+
+model LifeEvent {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  type      String
+  timestamp DateTime
+  metadata  Json
+
+  @@index([patientId, timestamp])
+  @@index([patientId, type])
+}
+
+model Pattern {
+  id               String   @id @default(cuid())
+  patientId        String
+  patient          Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  summary          String
+  confidence       Float
+  triggerEventType String
+  detectedAt       DateTime @default(now())
+  status           String   @default("new")
+
+  @@index([patientId, status])
+  @@index([patientId, detectedAt])
+}
+
+model Brief {
+  id          String   @id @default(cuid())
+  patientId   String
+  patient     Patient  @relation("PatientBriefs", fields: [patientId], references: [id], onDelete: Cascade)
+  clinicianId String
+  clinician   Clinician @relation("ClinicianBriefs", fields: [clinicianId], references: [id])
+  content     Json
+  periodStart DateTime
+  periodEnd   DateTime
+  generatedAt DateTime @default(now())
+
+  @@index([patientId, clinicianId])
+  @@index([generatedAt])
+}

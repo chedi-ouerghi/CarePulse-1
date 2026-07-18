@@ -1,0 +1,10 @@
+{
+  "name": "carepulse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered diabetes digital twin platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
