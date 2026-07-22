@@ -1,15 +1,17 @@
 """
 CarePulse Risk Model - FastAPI Microservice
 --------------------------------------------
-Exposes the diabetes risk screening model as an HTTP API
-for the NestJS backend to call.
+Exposes the diabetes risk screening model and clinical rules engine
+as an HTTP API for the NestJS backend.
 
 Endpoints:
-    POST /predict              - Score a single patient
-    POST /batch-predict        - Score multiple patients
-    GET  /health               - Health check
-    POST /clinical-rules       - Clinical rules engine analysis
-    GET  /clinical-rules/health - Clinical rules engine health check
+    GET  /health                         - Health check (both models)
+    POST /predict                        - Diabetes risk screening
+    POST /batch-predict                  - Batch diabetes risk screening
+    POST /readmission/predict            - 30-day readmission risk
+    POST /readmission/batch-predict      - Batch readmission risk
+    POST /clinical-rules                 - Clinical rules engine
+    POST /chat                           - Mistral AI chat bridge
 """
 
 import json
@@ -19,9 +21,10 @@ import statistics
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Dict, List, Literal, Optional
 from urllib import error as urllib_error, request as urllib_request
+
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -41,7 +44,12 @@ MODEL_DIR = Path(__file__).parent
 DATA_PATH = MODEL_DIR / "pima.csv"
 
 
+# ---------------------------------------------------------------------------
+# Environment loading
+# ---------------------------------------------------------------------------
+
 def _load_env_file() -> None:
+    """Load .env from agent/, project root, or cwd — first match wins."""
     env_candidates = [
         MODEL_DIR / ".env",
         Path.cwd() / ".env",
@@ -73,12 +81,17 @@ COLUMN_NAMES = [
     "Insulin", "BMI", "DiabetesPedigreeFunction", "Age", "Outcome",
 ]
 
-rf_model: RandomForestClassifier | None = None
-readmission_model: RandomForestClassifier | None = None
+
+# ---------------------------------------------------------------------------
+# Global model state
+# ---------------------------------------------------------------------------
+
+rf_model: Optional[RandomForestClassifier] = None
+readmission_model: Optional[RandomForestClassifier] = None
 readmission_feature_columns: List[str] = []
 
 
-def train_model():
+def train_model() -> None:
     global rf_model
     logger.info("Training diabetes risk model from %s", DATA_PATH)
     df = pd.read_csv(DATA_PATH, header=None, names=COLUMN_NAMES)
@@ -90,13 +103,14 @@ def train_model():
     rf_model = RandomForestClassifier(n_estimators=300, max_depth=6, random_state=42)
     rf_model.fit(X_train, y_train)
     accuracy = rf_model.score(X_test, y_test)
-    logger.info("Model trained. Test accuracy: %.4f", accuracy)
+    logger.info("Diabetes risk model trained. Test accuracy: %.4f", accuracy)
 
 
 def train_readmission_model() -> None:
     global readmission_model, readmission_feature_columns
     logger.info("Training readmission model")
     readmission_model, readmission_feature_columns = fit_readmission_model()
+    logger.info("Readmission model trained.")
 
 
 @asynccontextmanager
@@ -112,11 +126,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CarePulse Risk Model",
-    description="Diabetes risk screening API using Random Forest classification",
-    version="1.0.0",
+    description="Diabetes risk screening + clinical rules engine API",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
+
+# ===========================================================================
+# Pydantic models — Diabetes screening
+# ===========================================================================
 
 class PatientFeatures(BaseModel):
     pregnancies: int = Field(..., ge=0, description="Number of pregnancies")
@@ -144,26 +162,9 @@ class BatchPredictionResponse(BaseModel):
     count: int
 
 
-class ChatMessage(BaseModel):
-    role: str = "user"
-    content: str = ""
-
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessage] = Field(default_factory=list)
-    system_prompt: Optional[str] = None
-    model: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    reply: str
-    model: str
-
-
-class HealthResponse(BaseModel):
-    status: str
-    model_loaded: bool
-
+# ===========================================================================
+# Pydantic models — Readmission
+# ===========================================================================
 
 class ReadmissionPatientFeatures(BaseModel):
     age: Optional[int] = None
@@ -228,9 +229,45 @@ class ReadmissionBatchPredictionResponse(BaseModel):
     count: int
 
 
-# ---------------------------------------------------------------------------
-# Clinical Rules Engine - Pydantic models
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Pydantic models — Chat (Mistral bridge)
+# ===========================================================================
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"] = "user"
+    content: str = ""
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage] = Field(default_factory=list)
+    system_prompt: Optional[str] = None
+    model: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    model: str
+    source: Literal["mistral", "fallback"] = "mistral"
+
+
+# ===========================================================================
+# Pydantic models — Health
+# ===========================================================================
+
+class ModelHealth(BaseModel):
+    loaded: bool
+    error: Optional[str] = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    diabetes_model: ModelHealth
+    readmission_model: ModelHealth
+
+
+# ===========================================================================
+# Pydantic models — Clinical Rules Engine
+# ===========================================================================
 
 class Reading(BaseModel):
     value: float
@@ -244,12 +281,12 @@ class Event(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class Medication(BaseModel):
+class MedicationEntry(BaseModel):
     name: str
     dosage: str
 
 
-class LabResult(BaseModel):
+class LabResultEntry(BaseModel):
     name: str
     value: float
     unit: str
@@ -259,8 +296,8 @@ class ClinicalRulesRequest(BaseModel):
     patient_id: str
     readings: List[Reading] = []
     events: List[Event] = []
-    medications: List[Medication] = []
-    lab_results: List[LabResult] = []
+    medications: List[MedicationEntry] = []
+    lab_results: List[LabResultEntry] = []
 
 
 class TimelineEntry(BaseModel):
@@ -302,14 +339,97 @@ class ClinicalRulesResponse(BaseModel):
     timeline_summary: str
 
 
-class ClinicalHealthResponse(BaseModel):
-    status: str
-    engine_version: str
+# ===========================================================================
+# Helpers — Diabetes screening
+# ===========================================================================
+
+def compute_risk_level(score: float) -> str:
+    if score < 0.3:
+        return "low"
+    if score < 0.5:
+        return "moderate"
+    if score < 0.7:
+        return "high"
+    return "very_high"
 
 
-# ---------------------------------------------------------------------------
-# Clinical Rules Engine - helpers
-# ---------------------------------------------------------------------------
+def features_to_dataframe(patient: PatientFeatures) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Pregnancies": patient.pregnancies,
+        "Glucose": patient.glucose,
+        "BloodPressure": patient.blood_pressure,
+        "SkinThickness": patient.skin_thickness,
+        "Insulin": patient.insulin,
+        "BMI": patient.bmi,
+        "DiabetesPedigreeFunction": patient.diabetes_pedigree_function,
+        "Age": patient.age,
+    }])
+
+
+# ===========================================================================
+# Helpers — Mistral chat
+# ===========================================================================
+
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+
+_FALLBACK_REPLIES: Dict[str, str] = {
+    "default": (
+        "I'm sorry — the AI assistant is temporarily unavailable. "
+        "Please try again later or contact your care team."
+    ),
+}
+
+
+def _call_mistral(request: ChatRequest) -> str:
+    api_key = os.getenv("MISTRAL_API_KEY", MISTRAL_API_KEY).strip()
+    if not api_key:
+        raise RuntimeError("MISTRAL_API_KEY is not configured")
+
+    messages: List[Dict[str, str]] = []
+    if request.system_prompt:
+        messages.append({"role": "system", "content": request.system_prompt})
+    for message in request.messages:
+        messages.append({"role": message.role, "content": message.content})
+
+    if not messages:
+        raise RuntimeError("No messages provided")
+
+    payload = {
+        "model": request.model or MISTRAL_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+    }
+
+    http_request = urllib_request.Request(
+        MISTRAL_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib_request.urlopen(http_request, timeout=60) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Mistral AI request failed: {exc}") from exc
+
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("Unexpected Mistral AI response format") from exc
+
+
+def _get_fallback_reply(request: ChatRequest) -> str:
+    """Deterministic fallback when Mistral is unavailable."""
+    return _FALLBACK_REPLIES["default"]
+
+
+# ===========================================================================
+# Helpers — Clinical Rules Engine
+# ===========================================================================
 
 def _parse_ts(ts_str: str) -> datetime:
     ts = ts_str.replace("Z", "+00:00")
@@ -319,7 +439,7 @@ def _parse_ts(ts_str: str) -> datetime:
 def _build_timeline(
     readings: List[Reading],
     events: List[Event],
-    medications: List[Medication],
+    medications: List[MedicationEntry],
 ) -> List[TimelineEntry]:
     entries: List[TimelineEntry] = []
 
@@ -335,7 +455,7 @@ def _build_timeline(
         entries.append(TimelineEntry(
             time=e.timestamp,
             type=e.type,
-            detail=str(e.metadata) if e.metadata else "",
+            detail=json.dumps(e.metadata) if e.metadata else "",
         ))
 
     for m in medications:
@@ -349,12 +469,20 @@ def _build_timeline(
     return entries
 
 
-def _compute_stats(readings: List[Reading], events: List[Event], medications: List[Medication]) -> ClinicalStats:
+def _compute_stats(
+    readings: List[Reading],
+    events: List[Event],
+    medications: List[MedicationEntry],
+) -> ClinicalStats:
     glucose_values = [r.value for r in readings]
 
     if glucose_values:
         avg_glucose = round(statistics.mean(glucose_values), 1)
-        variance = round(statistics.variance(glucose_values), 1) if len(glucose_values) > 1 else 0.0
+        variance = (
+            round(statistics.variance(glucose_values), 1)
+            if len(glucose_values) > 1
+            else 0.0
+        )
         in_range = sum(1 for v in glucose_values if 70 <= v <= 180)
         time_in_range = round(in_range / len(glucose_values), 2)
         hypo_events = sum(1 for v in glucose_values if v < 70)
@@ -366,20 +494,21 @@ def _compute_stats(readings: List[Reading], events: List[Event], medications: Li
         hypo_events = 0
         hyper_events = 0
 
+    # Meal frequency
     meal_events = [e for e in events if e.type == "meal"]
-    if readings:
-        glucose_times = [_parse_ts(r.timestamp) for r in readings if r.timestamp]
-        if glucose_times and meal_events:
-            meal_times = [_parse_ts(e.timestamp) for e in meal_events]
-            span_days = max((max(glucose_times) - min(glucose_times)).days, 1)
-            meal_frequency = round(len(meal_times) / span_days, 1)
-        else:
-            meal_frequency = 0.0
-    else:
-        meal_frequency = 0.0
+    meal_frequency = 0.0
+    if glucose_times := [_parse_ts(r.timestamp) for r in readings if r.timestamp]:
+        if meal_events:
+            try:
+                meal_times = [_parse_ts(e.timestamp) for e in meal_events]
+                span_days = max((max(glucose_times) - min(glucose_times)).days, 1)
+                meal_frequency = round(len(meal_times) / span_days, 1)
+            except (ValueError, TypeError):
+                meal_frequency = 0.0
 
-    completeness = len(readings) / 288  # assume 288 readings per day (every 5 min)
-    completeness = min(completeness, 1.0)
+    # Adherence: data completeness (50%) + medication presence (50%)
+    # 288 readings = full day of CGM (every 5 min)
+    completeness = min(len(readings) / 288, 1.0)
     med_score = 1.0 if medications else 0.0
     adherence_score = round(completeness * 0.5 + med_score * 0.5, 2)
 
@@ -397,8 +526,8 @@ def _compute_stats(readings: List[Reading], events: List[Event], medications: Li
 def _compute_risk(stats: ClinicalStats) -> RiskAssessment:
     total = stats.hyper_events + stats.hypo_events
     glucose_points = total if total > 0 else 1
-    hyperglycemia = round(stats.hyper_events / glucose_points, 2) if glucose_points else 0.0
-    hypoglycemia = round(stats.hypo_events / glucose_points, 2) if glucose_points else 0.0
+    hyperglycemia = round(stats.hyper_events / glucose_points, 2)
+    hypoglycemia = round(stats.hypo_events / glucose_points, 2)
     adherence = stats.adherence_score
     lifestyle = round(stats.time_in_range, 2)
 
@@ -435,13 +564,13 @@ def _generate_alerts(stats: ClinicalStats, risk: RiskAssessment) -> List[Alert]:
     if risk.hyperglycemia > 0.5:
         alerts.append(Alert(
             title="Frequent Hyperglycemia",
-            message=f"More than 50% of readings are above 180 mg/dL",
+            message="More than 50% of readings are above 180 mg/dL",
             severity="high",
         ))
     if stats.time_in_range < 0.5:
         alerts.append(Alert(
             title="Low Time in Range",
-            message=f"Time in range is {stats.time_in_range * 100:.0f}%, target is ≥70%",
+            message=f"Time in range is {stats.time_in_range * 100:.0f}%, target is >=70%",
             severity="medium",
         ))
     if risk.overall == "high":
@@ -466,96 +595,29 @@ def _build_summary(stats: ClinicalStats, risk: RiskAssessment) -> str:
     return " ".join(parts)
 
 
-def compute_risk_level(score: float) -> str:
-    if score < 0.3:
-        return "low"
-    elif score < 0.5:
-        return "moderate"
-    elif score < 0.7:
-        return "high"
-    return "very_high"
-
-
-def features_to_dataframe(patient: PatientFeatures) -> pd.DataFrame:
-    return pd.DataFrame([{
-        "Pregnancies": patient.pregnancies,
-        "Glucose": patient.glucose,
-        "BloodPressure": patient.blood_pressure,
-        "SkinThickness": patient.skin_thickness,
-        "Insulin": patient.insulin,
-        "BMI": patient.bmi,
-        "DiabetesPedigreeFunction": patient.diabetes_pedigree_function,
-        "Age": patient.age,
-    }])
-
-
-MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
-
-
-def _call_mistral(request: ChatRequest) -> str:
-    api_key = os.getenv("MISTRAL_API_KEY", MISTRAL_API_KEY).strip()
-    if not api_key:
-        raise RuntimeError("MISTRAL_API_KEY is not set in agent/.env")
-
-    messages: List[Dict[str, str]] = []
-    if request.system_prompt:
-        messages.append({"role": "system", "content": request.system_prompt})
-    for message in request.messages:
-        role = (message.role or "user").strip() or "user"
-        content = (message.content or "").strip()
-        if role in {"user", "assistant", "system"}:
-            messages.append({"role": role, "content": content})
-
-    payload = {
-        "model": request.model or MISTRAL_MODEL,
-        "messages": messages,
-        "temperature": 0.7,
-    }
-
-    http_request = urllib_request.Request(
-        MISTRAL_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib_request.urlopen(http_request, timeout=60) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Mistral AI request failed: {exc}") from exc
-
-    try:
-        return body["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError("Unexpected Mistral AI response format") from exc
-
+# ===========================================================================
+# Endpoints
+# ===========================================================================
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
     return HealthResponse(
         status="ok",
-        model_loaded=rf_model is not None,
+        diabetes_model=ModelHealth(
+            loaded=rf_model is not None,
+            error=None if rf_model is not None else "Model not loaded",
+        ),
+        readmission_model=ModelHealth(
+            loaded=readmission_model is not None,
+            error=None if readmission_model is not None else "Model not loaded",
+        ),
     )
-
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    try:
-        reply = _call_mistral(request)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    return ChatResponse(reply=reply, model=request.model or MISTRAL_MODEL)
 
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(patient: PatientFeatures):
     if rf_model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+        raise HTTPException(status_code=503, detail="Diabetes risk model not loaded")
 
     row = features_to_dataframe(patient)
     risk_score = float(rf_model.predict_proba(row)[0][1])
@@ -569,7 +631,7 @@ async def predict(patient: PatientFeatures):
 @app.post("/batch-predict", response_model=BatchPredictionResponse)
 async def batch_predict(request: BatchPredictionRequest):
     if rf_model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+        raise HTTPException(status_code=503, detail="Diabetes risk model not loaded")
 
     results = []
     for patient in request.patients:
@@ -613,18 +675,6 @@ async def readmission_batch_predict(request: ReadmissionBatchPredictionRequest):
     return ReadmissionBatchPredictionResponse(results=results, count=len(results))
 
 
-# ---------------------------------------------------------------------------
-# Clinical Rules Engine - Endpoints
-# ---------------------------------------------------------------------------
-
-@app.get("/clinical-rules/health", response_model=ClinicalHealthResponse)
-async def clinical_rules_health():
-    return ClinicalHealthResponse(
-        status="ok",
-        engine_version="clinical_rules_v1",
-    )
-
-
 @app.post("/clinical-rules", response_model=ClinicalRulesResponse)
 async def clinical_rules(request: ClinicalRulesRequest):
     timeline = _build_timeline(request.readings, request.events, request.medications)
@@ -640,6 +690,17 @@ async def clinical_rules(request: ClinicalRulesRequest):
         alerts=alerts,
         timeline_summary=summary,
     )
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    try:
+        reply = _call_mistral(request)
+        return ChatResponse(reply=reply, model=request.model or MISTRAL_MODEL, source="mistral")
+    except Exception as exc:
+        logger.warning("Mistral call failed, using fallback: %s", exc)
+        reply = _get_fallback_reply(request)
+        return ChatResponse(reply=reply, model=request.model or MISTRAL_MODEL, source="fallback")
 
 
 if __name__ == "__main__":

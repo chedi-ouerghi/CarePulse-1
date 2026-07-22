@@ -5,8 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY .env ./.env
-COPY carepulse_risk_model.py pima.csv server.py ./
+COPY . .
 
 EXPOSE 8000
 

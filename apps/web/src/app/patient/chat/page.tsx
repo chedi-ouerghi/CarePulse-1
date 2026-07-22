@@ -2,8 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "@/components/auth-context";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { queries } from "@/lib/api";
+import { usePatientChat } from "@/hooks/usePatientChat";
 import {
   Send,
   MessageCircle,
@@ -15,21 +14,9 @@ import {
   Sparkles,
   Clock,
   Zap,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: string;
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 const SUGGESTIONS = [
   "What's my average glucose this week?",
@@ -40,42 +27,24 @@ const SUGGESTIONS = [
 
 export default function PatientChat() {
   const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const conversationsQuery = useQuery({
-    queryKey: ["conversations", user?.id],
-    queryFn: () => queries.chat.getConversations(user!.id),
-    enabled: !!user,
-  });
-
-  const messagesQuery = useQuery({
-    queryKey: ["messages", activeConversationId],
-    queryFn: () => queries.chat.getMessages(activeConversationId!),
-    enabled: !!activeConversationId,
-  });
-
-  const sendMutation = useMutation({
-    mutationFn: ({
-      content,
-      conversationId,
-    }: {
-      content: string;
-      conversationId?: string;
-    }) => queries.chat.send(user!.id, content, conversationId),
-    onSuccess: (data) => {
-      if (!activeConversationId && data.conversationId) {
-        setActiveConversationId(data.conversationId);
-        queryClient.invalidateQueries({ queryKey: ["conversations", user?.id] });
-      }
-      queryClient.invalidateQueries({
-        queryKey: ["messages", activeConversationId || data.conversationId],
-      });
-    },
-  });
+  const {
+    conversations,
+    isLoadingConversations,
+    activeConversationId,
+    selectConversation,
+    startNewChat,
+    messages,
+    isLoadingMessages,
+    isMessagesError,
+    messagesError,
+    sendMessage,
+    isSending,
+    sendError,
+  } = usePatientChat(user?.profileId);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -83,16 +52,17 @@ export default function PatientChat() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messagesQuery.data, scrollToBottom]);
+  }, [messages, isSending, scrollToBottom]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || sendMutation.isPending) return;
-    sendMutation.mutate({
-      content: trimmed,
-      conversationId: activeConversationId || undefined,
-    });
+    if (!trimmed || isSending) return;
     setInput("");
+    try {
+      await sendMessage(trimmed);
+    } catch {
+      // Error handled by hook & sendError
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -102,14 +72,7 @@ export default function PatientChat() {
     }
   };
 
-  const messages: Message[] = messagesQuery.data || [];
-  const conversations: Conversation[] = conversationsQuery.data || [];
   const hasActiveChat = !!activeConversationId;
-
-  const handleNewChat = () => {
-    setActiveConversationId(null);
-    setTimeout(() => inputRef.current?.focus(), 100);
-  };
 
   return (
     <div className="flex h-full bg-gradient-to-br from-[#f8faff] via-white to-[#f0f7ff]">
@@ -123,7 +86,10 @@ export default function PatientChat() {
             <h2 className="text-sm font-semibold text-[#0a0a0b]">Conversations</h2>
           </div>
           <button
-            onClick={handleNewChat}
+            onClick={() => {
+              startNewChat();
+              setTimeout(() => inputRef.current?.focus(), 100);
+            }}
             className="flex h-7 w-7 items-center justify-center rounded-lg text-[#a3a3a3] hover:bg-[#f5f5f5] hover:text-[#525252] transition-all duration-150 active:scale-90"
             title="New conversation"
           >
@@ -131,7 +97,7 @@ export default function PatientChat() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {conversationsQuery.isLoading ? (
+          {isLoadingConversations ? (
             <div className="flex justify-center py-10">
               <Loader2 className="h-4 w-4 animate-spin text-[#a3a3a3]" />
             </div>
@@ -148,7 +114,7 @@ export default function PatientChat() {
               {conversations.map((conv) => (
                 <button
                   key={conv.id}
-                  onClick={() => setActiveConversationId(conv.id)}
+                  onClick={() => selectConversation(conv.id)}
                   className={`flex w-full items-center gap-2.5 px-4 py-3 text-left transition-all duration-150 ${
                     activeConversationId === conv.id
                       ? "bg-gradient-to-r from-blue-50 to-cyan-50 border-l-2 border-primary-500"
@@ -172,10 +138,10 @@ export default function PatientChat() {
                           : "text-[#525252]"
                       }`}
                     >
-                      {conv.title || "New conversation"}
+                      {conv.messages?.[0]?.contentText || "Care Assistant Chat"}
                     </p>
                     <p className="text-[11px] text-[#a3a3a3]">
-                      {new Date(conv.updatedAt || conv.createdAt).toLocaleDateString(undefined, {
+                      {new Date(conv.lastMessageAt || conv.startedAt).toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",
                       })}
@@ -197,7 +163,7 @@ export default function PatientChat() {
       <div className="flex flex-1 flex-col">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto">
-          {!hasActiveChat ? (
+          {!hasActiveChat && messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-6">
               <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-blue-600 to-cyan-600 text-white shadow-xl shadow-primary-500/20 animate-float">
                 <Sparkles className="h-8 w-8" />
@@ -226,9 +192,23 @@ export default function PatientChat() {
                 ))}
               </div>
             </div>
-          ) : messagesQuery.isLoading ? (
+          ) : isLoadingMessages ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-[#a3a3a3]" />
+            </div>
+          ) : isMessagesError ? (
+            <div className="flex h-full flex-col items-center justify-center text-center p-6">
+              <AlertCircle className="h-8 w-8 text-red-500 mb-2" />
+              <p className="text-sm font-semibold text-[#0a0a0b]">Failed to load messages</p>
+              <p className="text-xs text-[#737373] mt-1 mb-4">
+                {(messagesError as Error)?.message || "An unexpected error occurred."}
+              </p>
+              <button
+                onClick={() => selectConversation(activeConversationId)}
+                className="btn-subtle text-xs"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+              </button>
             </div>
           ) : messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center">
@@ -292,7 +272,7 @@ export default function PatientChat() {
                   )}
                 </div>
               ))}
-              {sendMutation.isPending && (
+              {isSending && (
                 <div className="flex gap-3 animate-fadeIn">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 text-white shadow-md">
                     <Bot className="h-4 w-4" />
@@ -311,20 +291,21 @@ export default function PatientChat() {
           )}
         </div>
 
-        {/* Input */}
+        {/* Input area */}
         <div className="border-t border-[#e5e5e5]/60 bg-white/70 backdrop-blur-xl p-4">
+          {sendError && (
+            <div className="mx-auto max-w-3xl mb-2 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+              <span>Error: {(sendError as Error).message}</span>
+            </div>
+          )}
           <div className="mx-auto flex max-w-3xl items-end gap-2">
             <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={
-                hasActiveChat
-                  ? "Ask about your diabetes data..."
-                  : "Type a message..."
-              }
-              disabled={sendMutation.isPending}
+              placeholder="Ask about your diabetes data..."
+              disabled={isSending}
               rows={1}
               className="flex-1 resize-none rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm text-[#0a0a0b] placeholder-[#a3a3a3] transition-all duration-150 focus:border-primary-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:opacity-50 shadow-sm"
               style={{ minHeight: "44px", maxHeight: "120px" }}
@@ -336,10 +317,10 @@ export default function PatientChat() {
             />
             <button
               onClick={handleSend}
-              disabled={!input.trim() || sendMutation.isPending}
+              disabled={!input.trim() || isSending}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 text-white shadow-lg shadow-primary-500/20 transition-all duration-150 hover:shadow-xl hover:shadow-primary-500/30 active:scale-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {sendMutation.isPending ? (
+              {isSending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />

@@ -38,33 +38,36 @@ export default function ClinicianReportsPage() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {patients.map((patient: any, i: number) => (
-              <Link
-                key={patient.id}
-                href={`/clinician/report/${patient.id}`}
-                className="group rounded-2xl border border-[#e2e8f0] bg-white/80 backdrop-blur-sm p-5 shadow-sm transition-all duration-200 hover:shadow-lg hover:border-blue-200 active:scale-[0.98] animate-slideUp"
-                style={{ animationDelay: `${i * 30}ms` }}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100 to-cyan-100 text-blue-700 text-sm font-bold">
-                    {patient.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-[#0f172a] group-hover:text-blue-600 transition-colors">
-                      {patient.name}
-                    </p>
+            {patients.map((patient: any, i: number) => {
+              const patientName = typeof patient?.name === "string" && patient.name.trim() ? patient.name : "Unknown Patient";
+              return (
+                <Link
+                  key={patient.id}
+                  href={`/clinician/report/${patient.id}`}
+                  className="group rounded-2xl border border-[#e2e8f0] bg-white/80 backdrop-blur-sm p-5 shadow-sm transition-all duration-200 hover:shadow-lg hover:border-blue-200 active:scale-[0.98] animate-slideUp"
+                  style={{ animationDelay: `${i * 30}ms` }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100 to-cyan-100 text-blue-700 text-sm font-bold">
+                      {patientName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-[#0f172a] group-hover:text-blue-600 transition-colors">
+                        {patientName}
+                      </p>
                     <p className="text-xs text-[#94a3b8] mt-0.5">{patient.email}</p>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium mt-1.5 ${patient.diabetesType === "type1" ? "bg-blue-50 text-blue-600" : "bg-cyan-50 text-cyan-600"}`}>
                       {patient.diabetesType === "type1" ? "Type 1" : "Type 2"}
                     </span>
                   </div>
                 </div>
-                <div className="mt-4 flex items-center justify-between text-xs text-[#94a3b8]">
-                  <span>Open report</span>
-                  <span className="text-blue-500 group-hover:translate-x-1 transition-transform">→</span>
-                </div>
-              </Link>
-            ))}
+                  <div className="mt-4 flex items-center justify-between text-xs text-[#94a3b8]">
+                    <span>Open report</span>
+                    <span className="text-blue-500 group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

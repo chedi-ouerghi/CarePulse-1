@@ -29,6 +29,18 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function normalizeUser(raw: any): AuthUser {
+  const role: string = raw.role ?? "";
+  return {
+    id: raw.id,
+    name: raw.fullName ?? raw.name ?? "",
+    fullName: raw.fullName ?? raw.name ?? "",
+    email: raw.email,
+    role: role.toLowerCase() as "patient" | "clinician",
+    profileId: raw.profileId,
+  };
+}
+
 const PUBLIC_ROUTES = ["/signin", "/signup"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -44,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (storedToken && storedUser) {
       try {
-        const parsed = JSON.parse(storedUser) as AuthUser;
+        const parsed = normalizeUser(JSON.parse(storedUser));
         setToken(storedToken);
         setUser(parsed);
         api.setToken(storedToken);
@@ -55,6 +67,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsLoading(false);
   }, []);
+
+  // Wire up auto-logout on 401 responses
+  useEffect(() => {
+    api.setOnUnauthorized(() => {
+      setToken(null);
+      setUser(null);
+      api.setToken(null);
+      localStorage.removeItem("carepulse_token");
+      localStorage.removeItem("carepulse_user");
+      router.push("/signin");
+    });
+  }, [router]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -76,13 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? await queries.auth.loginPatient(email, password)
           : await queries.auth.loginClinician(email, password);
 
+      const normalized = normalizeUser(response.user);
       setToken(response.access_token);
-      setUser(response.user);
+      setUser(normalized);
       api.setToken(response.access_token);
       localStorage.setItem("carepulse_token", response.access_token);
-      localStorage.setItem("carepulse_user", JSON.stringify(response.user));
+      localStorage.setItem("carepulse_user", JSON.stringify(normalized));
 
-      const redirectPath = response.user.role === "clinician" ? "/clinician/dashboard" : "/patient/dashboard";
+      const redirectPath = normalized.role === "clinician" ? "/clinician/dashboard" : "/patient/dashboard";
       router.push(redirectPath);
     },
     [router]
@@ -100,25 +125,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response =
         data.role === "patient"
           ? await queries.auth.registerPatient({
-              name: data.name,
+              fullName: data.name,
               email: data.email,
               password: data.password,
-              diabetesType: data.diabetesType || "type2",
+              diabetesType: data.diabetesType || "TYPE_2",
             })
           : await queries.auth.registerClinician({
-              name: data.name,
+              fullName: data.name,
               email: data.email,
               password: data.password,
               specialty: data.specialty,
             });
 
+      const normalized = normalizeUser(response.user);
       setToken(response.access_token);
-      setUser(response.user);
+      setUser(normalized);
       api.setToken(response.access_token);
       localStorage.setItem("carepulse_token", response.access_token);
-      localStorage.setItem("carepulse_user", JSON.stringify(response.user));
+      localStorage.setItem("carepulse_user", JSON.stringify(normalized));
 
-      const redirectPath = response.user.role === "clinician" ? "/clinician/dashboard" : "/patient/dashboard";
+      const redirectPath = normalized.role === "clinician" ? "/clinician/dashboard" : "/patient/dashboard";
       router.push(redirectPath);
     },
     [router]

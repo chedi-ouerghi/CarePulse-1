@@ -1,128 +1,156 @@
-import { Injectable, UnauthorizedException, ConflictException } from "@nestjs/common";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { PrismaService } from "../prisma/prisma.service";
 import * as bcrypt from "bcryptjs";
+import { PrismaService } from "../prisma/prisma.service";
+import { LoginDto } from "./dto/login.dto";
+import { RegisterPatientDto } from "./dto/register-patient.dto";
+import { RegisterClinicianDto } from "./dto/register-clinician.dto";
+import { Role } from "@prisma/client";
 
 export interface JwtPayload {
   sub: string;
-  email: string;
-  role: "patient" | "clinician";
+  role: Role;
+  profileId: string;
 }
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
-    private jwtService: JwtService
+    private jwt: JwtService,
   ) {}
 
-  async loginPatient(email: string, password: string) {
-    const patient = await this.prisma.patient.findUnique({
-      where: { email },
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      include: { patient: true, clinician: true },
     });
-    if (!patient || !patient.passwordHash) {
+
+    if (!user || !user.isActive) {
       throw new UnauthorizedException("Invalid credentials");
     }
-    const valid = await bcrypt.compare(password, patient.passwordHash);
-    if (!valid) throw new UnauthorizedException("Invalid credentials");
 
-    const payload: JwtPayload = {
-      sub: patient.id,
-      email: patient.email,
-      role: "patient",
-    };
-    return {
-      access_token: this.jwtService.sign(payload),
-      user: { id: patient.id, name: patient.name, email: patient.email, role: "patient" as const },
-    };
-  }
-
-  async loginClinician(email: string, password: string) {
-    const clinician = await this.prisma.clinician.findUnique({
-      where: { email },
-    });
-    if (!clinician || !clinician.passwordHash) {
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) {
       throw new UnauthorizedException("Invalid credentials");
     }
-    const valid = await bcrypt.compare(password, clinician.passwordHash);
-    if (!valid) throw new UnauthorizedException("Invalid credentials");
 
-    const payload: JwtPayload = {
-      sub: clinician.id,
-      email: clinician.email,
-      role: "clinician",
-    };
-    return {
-      access_token: this.jwtService.sign(payload),
-      user: { id: clinician.id, name: clinician.name, email: clinician.email, role: "clinician" as const },
-    };
-  }
+    const profileId = user.patient?.id ?? user.clinician?.id;
+    if (!profileId) {
+      throw new UnauthorizedException("No profile linked to this account");
+    }
 
-  async registerPatient(data: {
-    name: string;
-    email: string;
-    password: string;
-    diabetesType: string;
-  }) {
-    const existing = await this.prisma.patient.findUnique({
-      where: { email: data.email },
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
     });
-    if (existing) throw new ConflictException("Email already registered");
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
-    const patient = await this.prisma.patient.create({
-      data: {
-        name: data.name,
-        email: data.email,
-        passwordHash,
-        diabetesType: data.diabetesType as any,
+    const token = this.signToken({
+      sub: user.id,
+      role: user.role,
+      profileId,
+    });
+
+    return {
+      access_token: token,
+      user: {
+        id: user.id,
+        fullName: user.patient?.fullName ?? user.clinician?.fullName,
+        email: user.email,
+        role: user.role,
+        profileId,
       },
-    });
-
-    const payload: JwtPayload = {
-      sub: patient.id,
-      email: patient.email,
-      role: "patient",
-    };
-    return {
-      access_token: this.jwtService.sign(payload),
-      user: { id: patient.id, name: patient.name, email: patient.email, role: "patient" as const },
     };
   }
 
-  async registerClinician(data: {
-    name: string;
-    email: string;
-    password: string;
-    specialty?: string;
-  }) {
-    const existing = await this.prisma.clinician.findUnique({
-      where: { email: data.email },
+  async registerPatient(dto: RegisterPatientDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
     });
-    if (existing) throw new ConflictException("Email already registered");
+    if (existing) {
+      throw new UnauthorizedException("Email already in use");
+    }
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
-    const clinician = await this.prisma.clinician.create({
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+
+    const user = await this.prisma.user.create({
       data: {
-        name: data.name,
-        email: data.email,
+        email: dto.email,
         passwordHash,
-        specialty: data.specialty,
+        role: Role.PATIENT,
+        patient: {
+          create: {
+            fullName: dto.fullName,
+            diabetesType: dto.diabetesType,
+          },
+        },
       },
+      include: { patient: true },
     });
 
-    const payload: JwtPayload = {
-      sub: clinician.id,
-      email: clinician.email,
-      role: "clinician",
-    };
+    const token = this.signToken({
+      sub: user.id,
+      role: user.role,
+      profileId: user.patient!.id,
+    });
+
     return {
-      access_token: this.jwtService.sign(payload),
-      user: { id: clinician.id, name: clinician.name, email: clinician.email, role: "clinician" as const },
+      access_token: token,
+      user: {
+        id: user.id,
+        fullName: user.patient!.fullName,
+        email: user.email,
+        role: user.role,
+        profileId: user.patient!.id,
+      },
     };
   }
 
-  async validateToken(payload: JwtPayload) {
-    return { id: payload.sub, email: payload.email, role: payload.role };
+  async registerClinician(dto: RegisterClinicianDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (existing) {
+      throw new UnauthorizedException("Email already in use");
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash,
+        role: Role.CLINICIAN,
+        clinician: {
+          create: {
+            fullName: dto.fullName,
+            specialty: dto.specialty,
+            licenseNumber: dto.licenseNumber,
+          },
+        },
+      },
+      include: { clinician: true },
+    });
+
+    const token = this.signToken({
+      sub: user.id,
+      role: user.role,
+      profileId: user.clinician!.id,
+    });
+
+    return {
+      access_token: token,
+      user: {
+        id: user.id,
+        fullName: user.clinician!.fullName,
+        email: user.email,
+        role: user.role,
+        profileId: user.clinician!.id,
+      },
+    };
+  }
+
+  private signToken(payload: JwtPayload): string {
+    return this.jwt.sign(payload);
   }
 }

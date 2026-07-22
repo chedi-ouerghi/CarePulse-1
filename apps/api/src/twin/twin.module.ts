@@ -1,12 +1,13 @@
 import { Module } from "@nestjs/common";
-import { AuthModule } from "../auth/auth.module";
 import { TwinService } from "./twin.service";
 import { TwinController } from "./twin.controller";
+import { AlertsModule } from "../alerts/alerts.module";
+import { TasksModule } from "../tasks/tasks.module";
 
 @Module({
-  imports: [AuthModule],
-  providers: [TwinService],
+  imports: [AlertsModule, TasksModule],
   controllers: [TwinController],
+  providers: [TwinService],
   exports: [TwinService],
 })
-export class TwinModule { }
+export class TwinModule {}

@@ -2,60 +2,78 @@ import {
   Controller,
   Get,
   Post,
-  Put,
-  Delete,
   Param,
   Body,
   Patch,
   UseGuards,
 } from "@nestjs/common";
 import { PatientService } from "./patient.service";
-import { PatientCreateSchema } from "@carepulse/shared-types";
-import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import { Role } from "@prisma/client";
+import { CreatePatientDto } from "./dto/create-patient.dto";
 
-const createPatientDto = new ZodValidationPipe(PatientCreateSchema);
-
-@UseGuards(JwtAuthGuard)
 @Controller("patients")
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PatientController {
-  constructor(private readonly patientService: PatientService) {}
+  constructor(private patientService: PatientService) {}
 
-  @Post()
-  create(@Body(createPatientDto) data: any) {
-    return this.patientService.create(data);
+  @Get("me")
+  getMe(@CurrentUser() user: { userId: string; profileId: string }) {
+    return this.patientService.findByUserId(user.userId);
   }
 
   @Get()
+  @Roles(Role.CLINICIAN, Role.ADMIN)
   findAll() {
     return this.patientService.findAll();
   }
 
+  @Get("clinic")
+  @Roles(Role.CLINICIAN)
+  findMyPatients(@CurrentUser() user: { userId: string; profileId: string }) {
+    return this.patientService.findByClinicianId(user.profileId);
+  }
+
   @Get(":id")
-  findById(@Param("id") id: string) {
+  @Roles(Role.CLINICIAN, Role.ADMIN)
+  findOne(@Param("id") id: string) {
     return this.patientService.findById(id);
   }
 
-  @Put(":id")
-  update(@Param("id") id: string, @Body() data: any) {
-    return this.patientService.update(id, data);
+  @Post()
+  @Roles(Role.CLINICIAN, Role.ADMIN)
+  create(
+    @CurrentUser() user: { userId: string; profileId: string },
+    @Body() dto: CreatePatientDto,
+  ) {
+    return this.patientService.create({
+      ...dto,
+      clinicianId: user.profileId,
+    });
   }
 
-  @Patch(":id/clinician/:clinicianId")
+  @Patch(":id")
+  @Roles(Role.PATIENT)
+  update(
+    @Param("id") id: string,
+    @CurrentUser() user: { userId: string; profileId: string },
+    @Body() body: Record<string, unknown>,
+  ) {
+    if (user.profileId !== id) {
+      throw new Error("Cannot update another patient's profile");
+    }
+    return this.patientService.update(id, body);
+  }
+
+  @Patch(":id/assign")
+  @Roles(Role.CLINICIAN, Role.ADMIN)
   assignClinician(
     @Param("id") id: string,
-    @Param("clinicianId") clinicianId: string
+    @CurrentUser() user: { userId: string; profileId: string },
   ) {
-    return this.patientService.assignClinician(id, clinicianId);
-  }
-
-  @Get(":id/state")
-  getState(@Param("id") id: string) {
-    return this.patientService.getState(id);
-  }
-
-  @Delete(":id")
-  delete(@Param("id") id: string) {
-    return this.patientService.delete(id);
+    return this.patientService.assignClinician(id, user.profileId);
   }
 }

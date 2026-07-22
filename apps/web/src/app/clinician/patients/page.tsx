@@ -17,9 +17,10 @@ export default function ClinicianPatientsPage() {
     enabled: !!user,
   });
 
-  const patients = (patientsQuery.data || []).filter((p: any) =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const patients = (patientsQuery.data || []).filter((p: any) => {
+    const patientName = typeof p?.name === "string" && p.name.trim() ? p.name : "Unknown Patient";
+    return !search || patientName.toLowerCase().includes(search.toLowerCase()) || p.email.toLowerCase().includes(search.toLowerCase());
+  });
 
   return (
     <div className="min-h-full">
@@ -76,15 +77,16 @@ export default function ClinicianPatientsPage() {
                         ? "bg-amber-100 text-amber-700"
                         : "bg-emerald-100 text-emerald-700";
                     const isType1 = patient.diabetesType === "type1";
+                    const patientName = typeof patient?.name === "string" && patient.name.trim() ? patient.name : "Unknown Patient";
                     return (
                       <tr key={patient.id} className="hover:bg-[#f8fafc] transition-colors">
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
                             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-100 to-cyan-100 text-sm font-bold text-blue-700">
-                              {patient.name.charAt(0).toUpperCase()}
+                              {patientName.charAt(0).toUpperCase()}
                             </div>
                             <div>
-                              <p className="font-medium text-[#0f172a]">{patient.name}</p>
+                              <p className="font-medium text-[#0f172a]">{patientName}</p>
                               <p className="text-xs text-[#94a3b8]">{patient.email}</p>
                             </div>
                           </div>

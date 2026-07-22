@@ -1,37 +1,35 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from "@nestjs/common";
+import { Controller, Post, Body } from "@nestjs/common";
 import { AuthService } from "./auth.service";
-import { JwtAuthGuard } from "./jwt-auth.guard";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterPatientDto } from "./dto/register-patient.dto";
 import { RegisterClinicianDto } from "./dto/register-clinician.dto";
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private authService: AuthService) {}
+
+  @Post("login")
+  login(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
+  }
 
   @Post("login/patient")
-  loginPatient(@Body() body: LoginDto) {
-    return this.authService.loginPatient(body.email, body.password);
+  loginPatient(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
   }
 
   @Post("login/clinician")
-  loginClinician(@Body() body: LoginDto) {
-    return this.authService.loginClinician(body.email, body.password);
+  loginClinician(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
   }
 
   @Post("register/patient")
-  registerPatient(@Body() body: RegisterPatientDto) {
-    return this.authService.registerPatient(body);
+  registerPatient(@Body() dto: RegisterPatientDto) {
+    return this.authService.registerPatient(dto);
   }
 
   @Post("register/clinician")
-  registerClinician(@Body() body: RegisterClinicianDto) {
-    return this.authService.registerClinician(body);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get("me")
-  getProfile(@Request() req: any) {
-    return this.authService.validateToken(req.user);
+  registerClinician(@Body() dto: RegisterClinicianDto) {
+    return this.authService.registerClinician(dto);
   }
 }

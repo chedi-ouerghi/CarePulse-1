@@ -4,13 +4,6 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "tsConfigPath": "tsconfig.build.json",
-    "assets": [
-      {
-        "include": "agent-orchestration/prompts/files/**",
-        "outDir": "./dist"
-      }
-    ],
-    "watchAssets": true
+    "tsConfigPath": "tsconfig.build.json"
   }
 }

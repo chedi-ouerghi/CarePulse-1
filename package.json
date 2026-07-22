@@ -11,9 +11,11 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
+    "db:generate": "cd apps/api && npx prisma generate",
     "db:push": "cd apps/api && npx prisma db push",
     "db:seed": "cd apps/api && npx prisma db seed",
-    "db:generate": "cd apps/api && npx prisma generate"
+    "db:reset": "cd apps/api && npx prisma db push --force-reset && npm run db:seed",
+    "test:e2e": "cd apps/api && npm run test:e2e"
   },
   "devDependencies": {
     "turbo": "^2.1.0",

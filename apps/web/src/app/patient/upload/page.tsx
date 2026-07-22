@@ -30,10 +30,10 @@ export default function PatientUpload() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const uploadMutation = useMutation({
-    mutationFn: () => queries.ingestion.upload(user!.id, file!, fileType),
+    mutationFn: () => queries.ingestion.upload(user!.profileId!, file!, fileType),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["twin", user?.id] });
-      queryClient.invalidateQueries({ queryKey: ["analyses", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["twin", user?.profileId] });
+      queryClient.invalidateQueries({ queryKey: ["analyses", user?.profileId] });
     },
   });
 

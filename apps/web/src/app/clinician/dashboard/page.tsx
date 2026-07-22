@@ -64,7 +64,7 @@ export default function ClinicianDashboard() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
-  const [formDiabetes, setFormDiabetes] = useState<"type1" | "type2">("type2");
+  const [formDiabetes, setFormDiabetes] = useState<"TYPE_1" | "TYPE_2">("TYPE_2");
 
   const createPatientMutation = useMutation({
     mutationFn: (data: { name: string; email: string; diabetesType: string }) =>
@@ -74,7 +74,7 @@ export default function ClinicianDashboard() {
       setShowAddModal(false);
       setFormName("");
       setFormEmail("");
-      setFormDiabetes("type2");
+      setFormDiabetes("TYPE_2");
     },
   });
 
@@ -95,8 +95,8 @@ export default function ClinicianDashboard() {
   ];
 
   const typeDistribution = [
-    { name: "Type 1", value: patients.filter((p: any) => p.diabetesType === "type1").length },
-    { name: "Type 2", value: patients.filter((p: any) => p.diabetesType === "type2").length },
+    { name: "Type 1", value: patients.filter((p: any) => p.diabetesType === "TYPE_1").length },
+    { name: "Type 2", value: patients.filter((p: any) => p.diabetesType === "TYPE_2").length },
   ];
 
   const alertCount = activeAlerts.length;
@@ -362,14 +362,14 @@ export default function ClinicianDashboard() {
                 <label className="mb-1 block text-xs font-medium text-[#64748b]">Diabetes Type</label>
                 <div className="flex gap-3">
                   <button
-                    type="button" onClick={() => setFormDiabetes("type1")}
-                    className={`flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors ${formDiabetes === "type1" ? "border-blue-300 bg-blue-50 text-blue-700" : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"}`}
+                    type="button" onClick={() => setFormDiabetes("TYPE_1")}
+                    className={`flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors ${formDiabetes === "TYPE_1" ? "border-blue-300 bg-blue-50 text-blue-700" : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"}`}
                   >
                     Type 1
                   </button>
                   <button
-                    type="button" onClick={() => setFormDiabetes("type2")}
-                    className={`flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors ${formDiabetes === "type2" ? "border-blue-300 bg-blue-50 text-blue-700" : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"}`}
+                    type="button" onClick={() => setFormDiabetes("TYPE_2")}
+                    className={`flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors ${formDiabetes === "TYPE_2" ? "border-blue-300 bg-blue-50 text-blue-700" : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"}`}
                   >
                     Type 2
                   </button>
@@ -433,7 +433,8 @@ function PatientCard({ patient, index }: { patient: any; index: number }) {
   const riskLevel = patient.overallRisk || "low";
   const colorClass = riskColorMap[riskLevel] || riskColorMap.low;
 
-  const isType1 = patient.diabetesType === "type1";
+  const isType1 = patient.diabetesType === "TYPE_1";
+  const patientName = typeof patient?.name === "string" && patient.name.trim() ? patient.name : "Unknown Patient";
 
   return (
     <Link
@@ -444,10 +445,10 @@ function PatientCard({ patient, index }: { patient: any; index: number }) {
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-100 to-cyan-100 text-sm font-bold text-blue-700">
-            {patient.name.charAt(0).toUpperCase()}
+            {patientName.charAt(0).toUpperCase()}
           </div>
           <div>
-            <p className="text-sm font-semibold text-[#0f172a] group-hover:text-blue-600 transition-colors">{patient.name}</p>
+            <p className="text-sm font-semibold text-[#0f172a] group-hover:text-blue-600 transition-colors">{patientName}</p>
             <p className="text-xs text-[#94a3b8]">{patient.email}</p>
           </div>
         </div>

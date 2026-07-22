@@ -1,9 +1,10 @@
-import { IsEmail, IsString, MinLength, IsEnum } from 'class-validator';
+import { IsEmail, IsEnum, IsString, MinLength } from "class-validator";
+import { DiabetesType } from "@prisma/client";
 
 export class RegisterPatientDto {
   @IsString()
   @MinLength(1)
-  name: string;
+  fullName: string;
 
   @IsEmail()
   email: string;
@@ -12,6 +13,6 @@ export class RegisterPatientDto {
   @MinLength(6)
   password: string;
 
-  @IsEnum(['type1', 'type2'])
-  diabetesType: string;
+  @IsEnum(DiabetesType)
+  diabetesType: DiabetesType;
 }

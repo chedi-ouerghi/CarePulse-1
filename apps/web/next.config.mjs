@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@carepulse/shared-types"],
+  output: "standalone",
 };
 
 export default nextConfig;

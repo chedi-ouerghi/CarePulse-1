@@ -1,9 +1,9 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from "class-validator";
 
 export class RegisterClinicianDto {
   @IsString()
   @MinLength(1)
-  name: string;
+  fullName: string;
 
   @IsEmail()
   email: string;
@@ -15,4 +15,8 @@ export class RegisterClinicianDto {
   @IsOptional()
   @IsString()
   specialty?: string;
+
+  @IsOptional()
+  @IsString()
+  licenseNumber?: string;
 }

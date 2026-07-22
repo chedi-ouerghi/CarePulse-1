@@ -10,12 +10,16 @@ import {
   Users,
   LogOut,
   Menu,
-  X
+  X,
+  Bell,
+  FileText,
 } from "lucide-react";
 
 const navLinks = [
   { href: "/clinician/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/clinician/patients", label: "Patients", icon: Users },
+  { href: "/clinician/alerts", label: "Alerts", icon: Bell },
+  { href: "/clinician/reports", label: "Reports", icon: FileText },
 ];
 
 export default function ClinicianLayout({ children }: { children: React.ReactNode }) {
@@ -65,20 +69,24 @@ export default function ClinicianLayout({ children }: { children: React.ReactNod
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navLinks.map(({ href, label, icon: Icon }) => {
             const isActive = pathname === href || pathname.startsWith(href + "/");
-            const isSubPage = !isActive && pathname.startsWith("/clinician/") &&
-              navLinks.every(l => l.href !== href || !pathname.startsWith(href));
-            const effectiveActive = isActive || (label === "Patients" && pathname.includes("/clinician/report"));
+            const isSubPage = !isActive && pathname.startsWith("/clinician/report");
+            const effectiveActive = isActive || (label === "Reports" && isSubPage);
             return (
               <Link
                 key={href}
                 href={href}
                 onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${effectiveActive
+                className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${
+                  effectiveActive
                     ? "bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg shadow-blue-500/20"
                     : "text-[#64748b] hover:bg-[#f1f5f9] hover:text-[#0f172a]"
-                  }`}
+                }`}
               >
-                <Icon className={`h-4 w-4 ${effectiveActive ? "text-white" : "text-[#94a3b8]"}`} />
+                <Icon
+                  className={`h-4 w-4 ${
+                    effectiveActive ? "text-white" : "text-[#94a3b8]"
+                  }`}
+                />
                 {label}
               </Link>
             );

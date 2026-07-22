@@ -1,25 +1,19 @@
 "use client";
 
 import { useAuth } from "@/components/auth-context";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { queries } from "@/lib/api";
-import { useSocket } from "@/hooks/useSocket";
+import { usePatientDashboard } from "@/hooks/usePatientDashboard";
 import {
   Activity,
-  TrendingUp,
   TrendingDown,
   Target,
   AlertTriangle,
   Loader2,
-  Wifi,
-  WifiOff,
   Zap,
   BrainCircuit,
   Clock,
   Droplets,
-  Heart,
-  Flame,
   Gauge,
+  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -32,63 +26,33 @@ import {
   ReferenceLine,
 } from "recharts";
 
-const SEVERITY_COLORS: Record<string, { bg: string; text: string; border: string; glow: string }> = {
-  low: { bg: "bg-[#f5f5f5]", text: "text-[#737373]", border: "border-[#e5e5e5]", glow: "shadow-[0_0_12px_rgba(115,115,115,0.15)]" },
-  medium: { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]", glow: "shadow-[0_0_12px_rgba(217,119,6,0.15)]" },
-  high: { bg: "bg-[#fef2f2]", text: "text-[#dc2626]", border: "border-[#fecaca]", glow: "shadow-[0_0_12px_rgba(220,38,38,0.15)]" },
-  critical: { bg: "bg-[#fef2f2]", text: "text-[#991b1b]", border: "border-[#fecaca]", glow: "shadow-[0_0_12px_rgba(220,38,38,0.25)]" },
+const SEVERITY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  low: { bg: "bg-[#f5f5f5]", text: "text-[#737373]", border: "border-[#e5e5e5]" },
+  medium: { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+  high: { bg: "bg-[#fef2f2]", text: "text-[#dc2626]", border: "border-[#fecaca]" },
+  critical: { bg: "bg-[#fef2f2]", text: "text-[#991b1b]", border: "border-[#fecaca]" },
 };
 
 export default function PatientDashboard() {
   const { user, token, logout } = useAuth();
-  const queryClient = useQueryClient();
-
-  const twinQuery = useQuery({
-    queryKey: ["twin", user?.id],
-    queryFn: () => queries.twin.get(user!.id),
-    enabled: !!user,
-  });
-
-  const analysesQuery = useQuery({
-    queryKey: ["analyses", user?.id],
-    queryFn: () => queries.analyses.listByPatient(user!.id),
-    enabled: !!user,
-  });
-
-  const alertsQuery = useQuery({
-    queryKey: ["alerts", user?.id],
-    queryFn: () => queries.alerts.listByPatient(user!.id),
-    enabled: !!user,
-  });
-
-  const { isConnected } = useSocket(user?.id || null, token);
-
-  const riskMutation = useMutation({
-    mutationFn: () => queries.agents.runRisk(user!.id),
-  });
-
-  const analysisMutation = useMutation({
-    mutationFn: () => queries.agents.runAnalysis(user!.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["analyses", user?.id] });
-    },
-  });
-
-  const chartData =
-    twinQuery.data?.cleanedReadings
-      ?.slice(-100)
-      .map((r: any) => ({
-        time: new Date(r.timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        value: r.value,
-        isAnomaly: r.isAnomaly,
-      })) || [];
-
-  const stats = twinQuery.data?.stats;
-  const latestAnalysis = analysesQuery.data?.[0];
-  const activeAlerts = (alertsQuery.data || []).filter((a: any) => a.status === "active");
+  const {
+    isConnected,
+    stats,
+    chartData,
+    isLoadingTwin,
+    isTwinError,
+    analyses,
+    isLoadingAnalyses,
+    activeAlerts,
+    latestRisk,
+    assessRisk,
+    isAssessingRisk,
+    riskError,
+    runAnalysis,
+    isAnalyzing,
+    analysisError,
+    refetchAll,
+  } = usePatientDashboard(user?.profileId, token);
 
   return (
     <div className="min-h-full">
@@ -124,11 +88,7 @@ export default function PatientDashboard() {
               </div>
             )}
             <span className="text-sm text-[#a3a3a3]">{user?.name}</span>
-            <button
-              onClick={logout}
-              className="btn-ghost text-[11px]"
-              title="Sign out"
-            >
+            <button onClick={logout} className="btn-ghost text-[11px]" title="Sign out">
               Sign out
             </button>
           </div>
@@ -152,11 +112,18 @@ export default function PatientDashboard() {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => analysisMutation.mutate()}
-                disabled={analysisMutation.isPending}
+                onClick={() => refetchAll()}
+                className="btn-ghost text-xs"
+                title="Refresh dashboard data"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => runAnalysis()}
+                disabled={isAnalyzing}
                 className="btn-subtle text-xs"
               >
-                {analysisMutation.isPending ? (
+                {isAnalyzing ? (
                   <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
                 ) : (
                   <BrainCircuit className="mr-1.5 inline h-3 w-3" />
@@ -164,11 +131,11 @@ export default function PatientDashboard() {
                 Analyze
               </button>
               <button
-                onClick={() => riskMutation.mutate()}
-                disabled={riskMutation.isPending}
+                onClick={() => assessRisk()}
+                disabled={isAssessingRisk}
                 className="btn-primary-apple text-xs"
               >
-                {riskMutation.isPending ? (
+                {isAssessingRisk ? (
                   <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
                 ) : (
                   <Zap className="mr-1.5 inline h-3 w-3" />
@@ -178,16 +145,29 @@ export default function PatientDashboard() {
             </div>
           </div>
 
+          {/* Global Errors */}
+          {(riskError || analysisError || isTwinError) && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700 space-y-1">
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertTriangle className="h-4 w-4" /> An error occurred while fetching data
+              </div>
+              {riskError && <p>Risk Assessment Error: {(riskError as Error).message}</p>}
+              {analysisError && <p>Analysis Error: {(analysisError as Error).message}</p>}
+              {isTwinError && <p>Twin Data Error: Failed to load glucose stats.</p>}
+            </div>
+          )}
+
           {/* Stat Cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="animate-fadeIn stagger-1">
               <StatCard
                 icon={<Droplets className="h-4 w-4" />}
                 label="Avg Glucose"
-                value={stats?.avgGlucose?.toFixed(1) || "—"}
+                value={stats?.avgGlucose ? stats.avgGlucose.toFixed(1) : "—"}
                 unit="mg/dL"
                 gradient="from-blue-500 to-cyan-500"
                 glow="shadow-blue-500/10"
+                isLoading={isLoadingTwin}
               />
             </div>
             <div className="animate-fadeIn stagger-2">
@@ -195,33 +175,36 @@ export default function PatientDashboard() {
                 icon={<Target className="h-4 w-4" />}
                 label="Time in Range"
                 value={
-                  stats?.timeInRange
+                  stats?.timeInRange !== undefined && stats?.timeInRange !== null
                     ? `${(stats.timeInRange * 100).toFixed(0)}`
                     : "—"
                 }
                 unit="%"
                 gradient="from-emerald-500 to-green-500"
                 glow="shadow-emerald-500/10"
+                isLoading={isLoadingTwin}
               />
             </div>
             <div className="animate-fadeIn stagger-3">
               <StatCard
                 icon={<TrendingDown className="h-4 w-4" />}
                 label="Hypo Events"
-                value={stats?.hypoEvents?.toString() || "0"}
+                value={stats?.hypoEvents !== undefined ? stats.hypoEvents.toString() : "0"}
                 unit="events"
                 gradient="from-red-500 to-rose-500"
                 glow="shadow-red-500/10"
+                isLoading={isLoadingTwin}
               />
             </div>
             <div className="animate-fadeIn stagger-4">
               <StatCard
                 icon={<Activity className="h-4 w-4" />}
                 label="Readings"
-                value={stats?.totalReadings?.toString() || "0"}
+                value={stats?.totalReadings !== undefined ? stats.totalReadings.toString() : "0"}
                 unit="total"
                 gradient="from-gray-500 to-slate-500"
                 glow="shadow-gray-500/10"
+                isLoading={isLoadingTwin}
               />
             </div>
           </div>
@@ -243,7 +226,7 @@ export default function PatientDashboard() {
                 </span>
               </div>
               <div className="p-5">
-                {twinQuery.isLoading ? (
+                {isLoadingTwin ? (
                   <div className="flex h-64 items-center justify-center">
                     <div className="flex flex-col items-center gap-2">
                       <Loader2 className="h-6 w-6 animate-spin text-[#a3a3a3]" />
@@ -256,12 +239,8 @@ export default function PatientDashboard() {
                       <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f5f5f5]">
                         <Activity className="h-6 w-6 text-[#d4d4d4]" />
                       </div>
-                      <p className="text-sm font-medium text-[#a3a3a3]">
-                        No glucose data yet
-                      </p>
-                      <p className="mt-0.5 text-xs text-[#d4d4d4]">
-                        Upload data to see your trends
-                      </p>
+                      <p className="text-sm font-medium text-[#a3a3a3]">No glucose data yet</p>
+                      <p className="mt-0.5 text-xs text-[#d4d4d4]">Upload data to see your trends</p>
                     </div>
                   </div>
                 ) : (
@@ -319,24 +298,13 @@ export default function PatientDashboard() {
                           fontWeight: 600,
                         }}
                       />
-                      <defs>
-                        <linearGradient id="glucoseGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#2563eb" stopOpacity={0.15} />
-                          <stop offset="100%" stopColor="#2563eb" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
                       <Line
                         type="monotone"
                         dataKey="value"
                         stroke="#2563eb"
                         strokeWidth={2}
                         dot={false}
-                        activeDot={{
-                          r: 5,
-                          fill: "#2563eb",
-                          stroke: "#fff",
-                          strokeWidth: 2,
-                        }}
+                        activeDot={{ r: 5, fill: "#2563eb", stroke: "#fff", strokeWidth: 2 }}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -344,7 +312,7 @@ export default function PatientDashboard() {
               </div>
             </div>
 
-            {/* Right sidebar */}
+            {/* Right Sidebar */}
             <div className="space-y-4 animate-fadeIn stagger-4">
               {/* Quick Risk Check */}
               <div className="glass-card-hover">
@@ -357,50 +325,50 @@ export default function PatientDashboard() {
                   </div>
                 </div>
                 <div className="p-5">
-                  {riskMutation.isPending ? (
+                  {isAssessingRisk ? (
                     <div className="flex items-center justify-center py-6">
                       <Loader2 className="h-5 w-5 animate-spin text-[#a3a3a3]" />
                     </div>
-                  ) : riskMutation.data ? (
+                  ) : latestRisk ? (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <span className="stat-label">Overall Status</span>
                         <span
                           className={`chip text-xs font-semibold ${
-                            (riskMutation.data.overallRisk || riskMutation.data.riskLevel) === "high" ||
-                            (riskMutation.data.overallRisk || riskMutation.data.riskLevel) === "very_high"
+                            (latestRisk.overallRisk || latestRisk.riskLevel) === "high" ||
+                            (latestRisk.overallRisk || latestRisk.riskLevel) === "very_high"
                               ? "bg-[#fef2f2] text-[#dc2626]"
-                              : (riskMutation.data.overallRisk || riskMutation.data.riskLevel) === "medium" ||
-                                (riskMutation.data.overallRisk || riskMutation.data.riskLevel) === "moderate"
+                              : (latestRisk.overallRisk || latestRisk.riskLevel) === "medium" ||
+                                (latestRisk.overallRisk || latestRisk.riskLevel) === "moderate"
                               ? "bg-[#fffbeb] text-[#d97706]"
                               : "bg-[#f0fdf4] text-[#16a34a]"
                           }`}
                         >
-                          {(riskMutation.data.overallRisk || riskMutation.data.riskLevel || "low")
+                          {(latestRisk.overallRisk || latestRisk.riskLevel || "low")
                             .toUpperCase()
                             .replace("_", " ")}
                         </span>
                       </div>
-                      {riskMutation.data.hyperglycemiaRisk !== undefined && (
+                      {latestRisk.hyperglycemiaRisk !== undefined && (
                         <div className="space-y-3 pt-2">
                           <RiskBar
                             label="Hyperglycemia"
-                            value={riskMutation.data.hyperglycemiaRisk}
+                            value={latestRisk.hyperglycemiaRisk}
                             color="bg-gradient-to-r from-amber-500 to-orange-500"
                           />
                           <RiskBar
                             label="Hypoglycemia"
-                            value={riskMutation.data.hypoglycemiaRisk}
+                            value={latestRisk.hypoglycemiaRisk}
                             color="bg-gradient-to-r from-blue-500 to-cyan-500"
                           />
                           <RiskBar
                             label="Adherence"
-                            value={riskMutation.data.adherenceScore ?? 0}
+                            value={latestRisk.adherenceScore ?? 0}
                             color="bg-gradient-to-r from-emerald-500 to-green-500"
                           />
                           <RiskBar
                             label="Lifestyle"
-                            value={riskMutation.data.lifestyleScore ?? 0}
+                            value={latestRisk.lifestyleScore ?? 0}
                             color="bg-gradient-to-r from-blue-500 to-cyan-500"
                           />
                         </div>
@@ -411,12 +379,8 @@ export default function PatientDashboard() {
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#f5f5f5]">
                         <AlertTriangle className="h-5 w-5 text-[#d4d4d4]" />
                       </div>
-                      <p className="text-sm font-medium text-[#a3a3a3]">
-                        No risk assessment yet
-                      </p>
-                      <p className="mt-0.5 text-xs text-[#d4d4d4]">
-                        Click &quot;Assess Risk&quot; above
-                      </p>
+                      <p className="text-sm font-medium text-[#a3a3a3]">No risk assessment yet</p>
+                      <p className="mt-0.5 text-xs text-[#d4d4d4]">Click &quot;Assess Risk&quot; above</p>
                     </div>
                   )}
                 </div>
@@ -437,7 +401,7 @@ export default function PatientDashboard() {
                     </span>
                   </div>
                   <div className="p-4 space-y-2">
-                    {activeAlerts.slice(0, 5).map((alert: any, i: number) => {
+                    {activeAlerts.slice(0, 5).map((alert, i) => {
                       const colors = SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.medium;
                       return (
                         <div
@@ -446,18 +410,12 @@ export default function PatientDashboard() {
                           style={{ animationDelay: `${i * 50}ms` }}
                         >
                           <div className="flex items-center gap-2 mb-1">
-                            <span
-                              className={`chip text-[10px] font-bold ${colors.text} ${colors.bg} border ${colors.border}`}
-                            >
+                            <span className={`chip text-[10px] font-bold ${colors.text} ${colors.bg} border ${colors.border}`}>
                               {alert.severity.toUpperCase()}
                             </span>
-                            <span className="text-xs font-semibold text-[#0a0a0b]">
-                              {alert.title}
-                            </span>
+                            <span className="text-xs font-semibold text-[#0a0a0b]">{alert.title}</span>
                           </div>
-                          <p className="text-xs text-[#525252] leading-relaxed">
-                            {alert.message}
-                          </p>
+                          <p className="text-xs text-[#525252] leading-relaxed">{alert.message}</p>
                         </div>
                       );
                     })}
@@ -474,33 +432,25 @@ export default function PatientDashboard() {
                     </div>
                     <h3 className="section-title">Analyses</h3>
                   </div>
-                  <span className="text-[11px] font-medium text-[#a3a3a3]">
-                    {analysesQuery.data?.length || 0} total
-                  </span>
+                  <span className="text-[11px] font-medium text-[#a3a3a3]">{analyses.length} total</span>
                 </div>
                 <div className="p-4">
-                  {analysesQuery.isLoading ? (
+                  {isLoadingAnalyses ? (
                     <div className="flex items-center justify-center py-6">
                       <Loader2 className="h-5 w-5 animate-spin text-[#a3a3a3]" />
                     </div>
-                  ) : analysesQuery.data?.length === 0 ? (
+                  ) : analyses.length === 0 ? (
                     <div className="py-4 text-center">
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#f5f5f5]">
                         <BrainCircuit className="h-5 w-5 text-[#d4d4d4]" />
                       </div>
-                      <p className="text-sm font-medium text-[#a3a3a3]">
-                        No analyses yet
-                      </p>
-                      <p className="mt-0.5 text-xs text-[#d4d4d4]">
-                        Run analysis to get insights
-                      </p>
+                      <p className="text-sm font-medium text-[#a3a3a3]">No analyses yet</p>
+                      <p className="mt-0.5 text-xs text-[#d4d4d4]">Run analysis to get insights</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {analysesQuery.data?.slice(0, 4).map((a: any, i: number) => {
-                        const topRiskLevel = Array.isArray(a.risks) && a.risks.length > 0
-                          ? a.risks[0].level
-                          : null;
+                      {analyses.slice(0, 4).map((a, i) => {
+                        const topRiskLevel = Array.isArray(a.risks) && a.risks.length > 0 ? a.risks[0].level : null;
                         const riskBadge =
                           topRiskLevel === "high" || topRiskLevel === "very_high"
                             ? "bg-[#fef2f2] text-[#dc2626]"
@@ -528,12 +478,11 @@ export default function PatientDashboard() {
                               )}
                             </div>
                             <p className="text-xs leading-relaxed text-[#525252] line-clamp-2">
-                              {(() => {
-                                if (typeof a.summary === "string") return a.summary;
-                                if (a.summary == null) return "No summary available yet.";
-                                const serialized = JSON.stringify(a.summary);
-                                return serialized ? serialized.slice(0, 120) : "No summary available yet.";
-                              })()}
+                              {typeof a.summary === "string"
+                                ? a.summary
+                                : a.summary
+                                ? JSON.stringify(a.summary).slice(0, 120)
+                                : "No summary available yet."}
                             </p>
                           </div>
                         );
@@ -557,6 +506,7 @@ function StatCard({
   unit,
   gradient,
   glow,
+  isLoading,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -564,12 +514,10 @@ function StatCard({
   unit?: string;
   gradient: string;
   glow: string;
+  isLoading?: boolean;
 }) {
   return (
-    <div
-      className={`glass-card-hover group p-5 relative overflow-hidden ${glow} transition-all duration-300 hover:scale-[1.02]`}
-    >
-      <div className="absolute -top-6 -right-6 h-16 w-16 rounded-full bg-gradient-to-br from-white/5 to-white/10 blur-xl" />
+    <div className={`glass-card-hover group p-5 relative overflow-hidden ${glow} transition-all duration-300 hover:scale-[1.02]`}>
       <div className="flex items-start justify-between">
         <div className={`rounded-xl p-2.5 bg-gradient-to-br ${gradient} text-white shadow-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3`}>
           {icon}
@@ -577,42 +525,29 @@ function StatCard({
       </div>
       <div className="mt-4">
         <p className="stat-label">{label}</p>
-        <p className="stat-value mt-0.5 animate-number">
-          {value}
-          {unit && (
-            <span className="ml-1 text-sm font-normal text-[#a3a3a3]">
-              {unit}
-            </span>
-          )}
-        </p>
+        {isLoading ? (
+          <div className="h-7 w-20 bg-[#f0f0f0] animate-pulse rounded mt-1" />
+        ) : (
+          <p className="stat-value mt-0.5 animate-number">
+            {value}
+            {unit && <span className="ml-1 text-sm font-normal text-[#a3a3a3]">{unit}</span>}
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
-function RiskBar({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
+function RiskBar({ label, value, color }: { label: string; value: number; color: string }) {
   const pct = Math.min(Math.max(value * 100, 0), 100);
   return (
     <div className="group">
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium text-[#525252]">{label}</span>
-        <span className="text-xs font-semibold text-[#525252] tabular-nums">
-          {pct.toFixed(0)}%
-        </span>
+        <span className="text-xs font-semibold text-[#525252] tabular-nums">{pct.toFixed(0)}%</span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-[#f0f0f0] shadow-inner">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full transition-all duration-700 ease-out ${color}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

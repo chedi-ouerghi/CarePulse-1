@@ -19,6 +19,7 @@ import {
   Gauge,
   BarChart3,
   LineChart as LineChartIcon,
+  CheckCircle,
 } from "lucide-react";
 import {
   LineChart,
@@ -75,7 +76,7 @@ export default function ClinicianReportPage({ params }: { params: { patientId: s
   });
 
   const generateReportMutation = useMutation({
-    mutationFn: () => queries.agents.runBrief(patientId, user?.id, 90),
+    mutationFn: () => queries.agents.runBrief(patientId, user?.profileId, 90),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reports", patientId] });
     },
@@ -94,6 +95,20 @@ export default function ClinicianReportPage({ params }: { params: { patientId: s
       });
     },
     onError: () => {},
+  });
+
+  const markReviewedMutation = useMutation({
+    mutationFn: (reportId: string) =>
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api"}/reports/${reportId}/review`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("carepulse_token")}`,
+        },
+      }).then((r) => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reports", patientId] });
+    },
   });
 
   const latestReport = reportsQuery.data?.[0];
@@ -127,6 +142,8 @@ export default function ClinicianReportPage({ params }: { params: { patientId: s
       ]
     : [];
 
+  const patientName = typeof patient?.name === "string" && patient.name.trim() ? patient.name : "Unknown Patient";
+
   return (
     <div className="min-h-full bg-[#f5f7fa]">
       <div className="mx-auto max-w-7xl px-6 py-6">
@@ -149,7 +166,7 @@ export default function ClinicianReportPage({ params }: { params: { patientId: s
                 )}
               </div>
               <p className="text-sm text-[#64748b] mt-0.5">
-                {patient ? `Pre-visit summary for ${patient.name}` : `Patient ID: ${patientId}`}
+                {patient ? `Pre-visit summary for ${patientName}` : `Patient ID: ${patientId}`}
               </p>
             </div>
           </div>
@@ -407,6 +424,131 @@ export default function ClinicianReportPage({ params }: { params: { patientId: s
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Clinical Analysis (Agent 1) */}
+            {analysesQuery.data && analysesQuery.data.length > 0 && (
+              <div className="rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50 to-indigo-50 p-5 shadow-sm animate-fadeIn stagger-6">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-500 text-white shadow-sm">
+                    <BrainCircuit className="h-4 w-4" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-[#0f172a]">Clinical Analysis (Agent 1)</h3>
+                  <span className="inline-flex items-center rounded-full bg-purple-100 text-purple-700 px-2 py-0.5 text-[10px] font-semibold border border-purple-200">
+                    {analysesQuery.data.length} analyses
+                  </span>
+                </div>
+                {analysesQuery.data[0]?.patterns && (
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold text-purple-700 uppercase tracking-wider mb-2">Patterns</p>
+                    <div className="space-y-2">
+                      {(Array.isArray(analysesQuery.data[0].patterns)
+                        ? analysesQuery.data[0].patterns
+                        : Object.values(analysesQuery.data[0].patterns)
+                      ).slice(0, 5).map((pattern: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2 rounded-lg bg-white/60 p-2">
+                          <span className="mt-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-purple-500" />
+                          <p className="text-xs text-[#334155]">
+                            {typeof pattern === "string"
+                              ? pattern
+                              : pattern?.description || pattern?.finding || JSON.stringify(pattern)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {analysesQuery.data[0]?.correlations && (
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold text-purple-700 uppercase tracking-wider mb-2">Correlations</p>
+                    <div className="space-y-2">
+                      {(Array.isArray(analysesQuery.data[0].correlations)
+                        ? analysesQuery.data[0].correlations
+                        : Object.values(analysesQuery.data[0].correlations)
+                      ).slice(0, 5).map((corr: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2 rounded-lg bg-white/60 p-2">
+                          <span className="mt-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+                          <p className="text-xs text-[#334155]">
+                            {typeof corr === "string"
+                              ? corr
+                              : corr?.description || corr?.finding || JSON.stringify(corr)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {analysesQuery.data[0]?.recommendations && (
+                  <div>
+                    <p className="text-xs font-semibold text-purple-700 uppercase tracking-wider mb-2">AI Recommendations</p>
+                    <div className="space-y-2">
+                      {(analysesQuery.data[0].recommendations as any[]).slice(0, 5).map((rec: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2 rounded-lg bg-white/60 p-2">
+                          <span className="mt-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          <p className="text-xs text-[#334155]">
+                            {typeof rec === "string" ? rec : rec?.description || rec?.recommendation || JSON.stringify(rec)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {analysesQuery.data[0]?.confidenceLevel && (
+                  <div className="mt-4 flex items-center gap-2 rounded-lg bg-white/60 p-2">
+                    <span className="text-xs font-medium text-purple-700">Confidence:</span>
+                    <div className="flex-1 h-2 rounded-full bg-purple-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500"
+                        style={{ width: `${(analysesQuery.data[0].confidenceLevel || 0) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-purple-700">
+                      {((analysesQuery.data[0].confidenceLevel || 0) * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mark as Reviewed Button */}
+            {latestReport && (
+              <div className="flex items-center justify-between rounded-2xl border border-[#e2e8f0] bg-white/80 backdrop-blur-sm p-5 shadow-sm animate-fadeIn stagger-6b">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 text-white shadow-lg">
+                    <CheckCircle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-[#0f172a]">Review Status</p>
+                    {latestReport.reviewedAt ? (
+                      <p className="text-xs text-emerald-600">
+                        Reviewed on {new Date(latestReport.reviewedAt).toLocaleDateString()}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-[#94a3b8]">Not yet reviewed</p>
+                    )}
+                  </div>
+                </div>
+                {!latestReport.reviewedAt && (
+                  <button
+                    onClick={() => markReviewedMutation.mutate(latestReport.id)}
+                    disabled={markReviewedMutation.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 shadow-lg shadow-emerald-500/20 transition-all duration-150 active:scale-95 disabled:opacity-50"
+                  >
+                    {markReviewedMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-3.5 w-3.5" />
+                    )}
+                    Mark as Reviewed
+                  </button>
+                )}
+                {latestReport.reviewedAt && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Reviewed
+                  </span>
+                )}
               </div>
             )}
 

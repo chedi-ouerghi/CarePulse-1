@@ -1,33 +1,82 @@
-import { Controller, Get, Post, Param, Body, Logger, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  UseGuards,
+} from "@nestjs/common";
 import { ChatService } from "./chat.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { CurrentUser } from "../auth/current-user.decorator";
+import { AuthUser } from "../ingestion/ingestion.service";
+import { ActivateChannelDto } from "./dto/activate-channel.dto";
 import { SendMessageDto } from "./dto/send-message.dto";
 
-@UseGuards(JwtAuthGuard)
-@Controller("chat")
+import { Roles } from "../auth/roles.decorator";
+import { Role } from "@prisma/client";
+
+@Controller()
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ChatController {
-  private readonly logger = new Logger(ChatController.name);
-  constructor(private readonly chatService: ChatService) {}
+  constructor(private chatService: ChatService) {}
 
-  @Get("conversations/:patientId")
-  getConversations(@Param("patientId") patientId: string) {
-    return this.chatService.getConversations(patientId);
+  // ── Channel activation ────────────────────────────────────────────
+
+  @Post("chat/channels/:patientId/activate")
+  activateChannel(
+    @CurrentUser() user: AuthUser,
+    @Param("patientId") patientId: string,
+    @Body() dto: ActivateChannelDto,
+  ) {
+    return this.chatService.activateChannel(user, patientId, dto);
   }
 
-  @Get("messages/:conversationId")
-  getMessages(@Param("conversationId") conversationId: string) {
-    return this.chatService.getMessages(conversationId);
+  // ── Conversations ─────────────────────────────────────────────────
+
+  @Post("chat/patient/:patientId/conversations")
+  createConversation(
+    @CurrentUser() user: AuthUser,
+    @Param("patientId") patientId: string,
+  ) {
+    return this.chatService.createConversationForPatient(user, patientId);
   }
 
-  @Post("send")
-  sendMessage(@Body() dto: SendMessageDto) {
-    this.logger.log(
-      `Sending message from patient ${dto.patientId} to conversation ${dto.conversationId || "new"}`
-    );
-    return this.chatService.sendMessage(
-      dto.patientId,
-      dto.conversationId,
-      dto.content
-    );
+  @Get("chat/patient/:patientId")
+  getConversations(
+    @CurrentUser() user: AuthUser,
+    @Param("patientId") patientId: string,
+  ) {
+    return this.chatService.getConversations(user, patientId);
+  }
+
+  @Get("chat/clinician/patient/:patientId")
+  @Roles(Role.CLINICIAN)
+  getPatientConversationsForClinician(
+    @CurrentUser() user: AuthUser,
+    @Param("patientId") patientId: string,
+  ) {
+    return this.chatService.getPatientConversationsForClinician(user, patientId);
+  }
+
+  // ── Messages ──────────────────────────────────────────────────────
+
+  @Post("chat/:conversationId/messages")
+  sendMessage(
+    @CurrentUser() user: AuthUser,
+    @Param("conversationId") conversationId: string,
+    @Body() dto: SendMessageDto,
+  ) {
+    return this.chatService.sendMessage(user, conversationId, dto);
+  }
+
+  @Get("chat/:conversationId/messages")
+  getMessages(
+    @CurrentUser() user: AuthUser,
+    @Param("conversationId") conversationId: string,
+  ) {
+    return this.chatService.getMessages(user, conversationId);
   }
 }

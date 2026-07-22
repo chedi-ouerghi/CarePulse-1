@@ -1,238 +1,415 @@
-import { PrismaClient, DiabetesType, LifeEventType, GlucoseSource } from "@prisma/client";
+/**
+ * CarePulse — Database seed script
+ *
+ * Creates:
+ *   1 demo clinician (Dr. Sarah Martin)
+ *   3 demo patients with realistic diabetes history:
+ *     - Alice Dupont (Type 2, well-controlled)
+ *     - Marcus Chen (Type 1, high-risk / frequent hypo)
+ *     - Fatima Al-Rashid (Type 2, recent hospitalization)
+ *
+ * Each patient gets: glucose readings, life events, medications,
+ * and lab results spanning the last 30 days.
+ */
+
+import { PrismaClient, Role, DiabetesType, Sex, ReadingSource, LifeEventType } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-function generateGlucoseData(
-  patientId: string,
-  days: number = 30
-): { patientId: string; value: number; timestamp: Date; source: GlucoseSource }[] {
-  const readings: {
-    patientId: string;
-    value: number;
-    timestamp: Date;
-    source: GlucoseSource;
-  }[] = [];
-  const now = new Date();
-
-  for (let day = days; day >= 0; day--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - day);
-
-    const readingsPerDay = 20 + Math.floor(Math.random() * 8);
-    for (let r = 0; r < readingsPerDay; r++) {
-      const timestamp = new Date(date);
-      timestamp.setHours(
-        6 + Math.floor((r * 18) / readingsPerDay),
-        Math.floor(Math.random() * 60),
-        0,
-        0
-      );
-
-      let baseGlucose = 120 + Math.random() * 40;
-
-      const hour = timestamp.getHours();
-      if (hour >= 7 && hour <= 9) baseGlucose += 30 + Math.random() * 20;
-      if (hour >= 12 && hour <= 14) baseGlucose += 25 + Math.random() * 15;
-      if (hour >= 18 && hour <= 20) baseGlucose += 35 + Math.random() * 25;
-
-      if (day % 7 < 2) {
-        baseGlucose += 20 + Math.random() * 30;
-      }
-
-      if (day % 5 === 0 && r > 5 && r < 10) {
-        baseGlucose -= 40 + Math.random() * 20;
-      }
-
-      const value = Math.max(50, Math.min(400, Math.round(baseGlucose)));
-
-      readings.push({
-        patientId,
-        value,
-        timestamp,
-        source: "cgm" as GlucoseSource,
-      });
-    }
-  }
-  return readings;
+function daysAgo(n: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
 }
 
-function generateLifeEvents(
-  patientId: string,
-  days: number = 30
-): { patientId: string; type: LifeEventType; timestamp: Date; metadata: any }[] {
-  const events: {
-    patientId: string;
-    type: LifeEventType;
-    timestamp: Date;
-    metadata: any;
-  }[] = [];
-  const now = new Date();
+function randomGlucose(base: number, variance: number): number {
+  return Math.round((base + (Math.random() - 0.5) * variance * 2) * 10) / 10;
+}
 
-  const eventTypes: { type: LifeEventType; meta: (i: number) => any }[] = [
-    {
-      type: "meal",
-      meta: (i: number) => ({
-        description: ["Breakfast", "Lunch", "Dinner", "Snack"][i % 4],
-        carbs: Math.round(30 + Math.random() * 60),
-      }),
-    },
-    {
-      type: "activity",
-      meta: () => ({
-        description: ["Walk", "Gym", "Yoga", "Swimming"][
-          Math.floor(Math.random() * 4)
-        ],
-        duration_minutes: Math.round(15 + Math.random() * 60),
-        intensity: ["low", "moderate", "high"][Math.floor(Math.random() * 3)],
-      }),
-    },
-    {
-      type: "stress",
-      meta: () => ({
-        description: ["Work deadline", "Family call", "Argument", "Anxiety"][
-          Math.floor(Math.random() * 4)
-        ],
-        severity: ["low", "moderate", "high"][Math.floor(Math.random() * 3)],
-      }),
-    },
-    {
-      type: "medication",
-      meta: () => ({
-        name: ["Metformin", "Insulin", "Glipizide"][
-          Math.floor(Math.random() * 3)
-        ],
-        dosage: `${Math.round(5 + Math.random() * 20)}mg`,
-      }),
-    },
-    {
-      type: "sleep",
-      meta: () => ({
-        hours: Math.round(5 + Math.random() * 4),
-        quality: ["poor", "fair", "good", "excellent"][
-          Math.floor(Math.random() * 4)
-        ],
-      }),
-    },
-  ];
-
-  for (let day = days; day >= 0; day--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - day);
-
-    const numEvents = 2 + Math.floor(Math.random() * 4);
-    for (let i = 0; i < numEvents; i++) {
-      const eventTemplate =
-        eventTypes[Math.floor(Math.random() * eventTypes.length)];
-      const timestamp = new Date(date);
-      timestamp.setHours(
-        6 + Math.floor(Math.random() * 16),
-        Math.floor(Math.random() * 60),
-        0,
-        0
-      );
-
-      events.push({
-        patientId,
-        type: eventTemplate.type,
-        timestamp,
-        metadata: eventTemplate.meta(i),
-      });
-    }
-  }
-
-  return events;
+function randomHour(hoursAgo: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - hoursAgo);
+  d.setHours(8 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60));
+  return d;
 }
 
 async function main() {
-  console.log("Seeding database...");
+  console.log("Seeding CarePulse database...");
+
+  // Clean existing data (order matters due to FK constraints)
+  await prisma.$executeRawUnsafe(`
+    TRUNCATE TABLE
+      "AuditLog",
+      "TaskTracker",
+      "AlertNotification",
+      "Alert",
+      "ClinicalReport",
+      "ClinicalAnalysis",
+      "ReadmissionRiskScore",
+      "HospitalEncounter",
+      "DiabetesRiskScore",
+      "ClinicalRiskAssessment",
+      "ClinicalTimelineEntry",
+      "TwinSnapshot",
+      "Message",
+      "Conversation",
+      "MessagingChannelAccount",
+      "Consent",
+      "LabResult",
+      "Medication",
+      "LifeEvent",
+      "GlucoseReading",
+      "Patient",
+      "Clinician",
+      "RefreshToken",
+      "User"
+    CASCADE
+  `);
 
   const passwordHash = await bcrypt.hash("demo1234", 10);
 
-  const clinician = await prisma.clinician.create({
+  // ── Clinician ────────────────────────────────────────────────────
+  const clinicianUser = await prisma.user.create({
     data: {
-      name: "Dr. Sarah Chen",
-      email: "sarah.chen@carepulse.demo",
+      email: "dr.martin@carepulse.demo",
       passwordHash,
-      specialty: "Endocrinology",
+      role: Role.CLINICIAN,
+      clinician: {
+        create: {
+          fullName: "Dr. Sarah Martin",
+          licenseNumber: "FR-MED-12345",
+          specialty: "Endocrinology",
+          hospitalOrClinic: "Hôpital Universitaire de Paris",
+        },
+      },
+    },
+    include: { clinician: true },
+  });
+  const clinician = clinicianUser.clinician!;
+  console.log(`  ✓ Clinician: Dr. Sarah Martin (${clinician.id})`);
+
+  // ── Patient 1: Alice Dupont (Type 2, well-controlled) ────────────
+  const aliceUser = await prisma.user.create({
+    data: {
+      email: "alice.dupont@carepulse.demo",
+      passwordHash,
+      role: Role.PATIENT,
+      patient: {
+        create: {
+          fullName: "Alice Dupont",
+          diabetesType: DiabetesType.TYPE_2,
+          sex: Sex.FEMALE,
+          dateOfBirth: daysAgo(365 * 58),
+          heightCm: 162,
+          weightKg: 71,
+          clinicianId: clinician.id,
+        },
+      },
+    },
+    include: { patient: true },
+  });
+  const alice = aliceUser.patient!;
+
+  // Glucose readings: 30 days, well-controlled (avg ~130)
+  for (let day = 30; day >= 0; day--) {
+    const readingsPerDay = 3 + Math.floor(Math.random() * 2);
+    for (let r = 0; r < readingsPerDay; r++) {
+      await prisma.glucoseReading.create({
+        data: {
+          patientId: alice.id,
+          value: randomGlucose(130, 25),
+          source: r === 0 ? ReadingSource.CGM : ReadingSource.GLUCOMETER,
+          takenAt: randomHour(day * 24),
+        },
+      });
+    }
+  }
+
+  // Life events
+  for (let day = 30; day >= 0; day--) {
+    await prisma.lifeEvent.create({
+      data: {
+        patientId: alice.id,
+        type: LifeEventType.MEAL,
+        occurredAt: randomHour(day * 24 + 8),
+        payload: JSON.stringify({ mealType: "lunch", carbs: 45, description: "Salade poulet complet" }),
+      },
+    });
+    if (day % 3 === 0) {
+      await prisma.lifeEvent.create({
+        data: {
+          patientId: alice.id,
+          type: LifeEventType.ACTIVITY,
+          occurredAt: randomHour(day * 24 + 16),
+          payload: JSON.stringify({ activityType: "walking", durationMin: 30, intensity: "moderate" }),
+        },
+      });
+    }
+  }
+
+  // Medications
+  await prisma.medication.create({
+    data: {
+      patientId: alice.id,
+      name: "Metformine",
+      dosage: "1000mg",
+      frequency: "2x/jour",
+      startDate: daysAgo(365),
+      prescribedBy: "Dr. Sarah Martin",
+      active: true,
     },
   });
-  console.log(`Created clinician: ${clinician.name} (${clinician.id})`);
 
-  const patient = await prisma.patient.create({
+  // Lab results
+  await prisma.labResult.create({
+    data: { patientId: alice.id, name: "HbA1c", value: 6.8, unit: "%", takenAt: daysAgo(14) },
+  });
+  await prisma.labResult.create({
+    data: { patientId: alice.id, name: "Créatinine", value: 0.9, unit: "mg/dL", takenAt: daysAgo(14) },
+  });
+
+  console.log(`  ✓ Patient: Alice Dupont (${alice.id}) — 30 days of data`);
+
+  // ── Patient 2: Marcus Chen (Type 1, high-risk) ──────────────────
+  const marcusUser = await prisma.user.create({
     data: {
-      name: "Maria Garcia",
-      email: "maria@carepulse.demo",
-      diabetesType: "type2" as DiabetesType,
+      email: "marcus.chen@carepulse.demo",
       passwordHash,
-      clinicianId: clinician.id,
+      role: Role.PATIENT,
+      patient: {
+        create: {
+          fullName: "Marcus Chen",
+          diabetesType: DiabetesType.TYPE_1,
+          sex: Sex.MALE,
+          dateOfBirth: daysAgo(365 * 34),
+          heightCm: 178,
+          weightKg: 82,
+          clinicianId: clinician.id,
+        },
+      },
+    },
+    include: { patient: true },
+  });
+  const marcus = marcusUser.patient!;
+
+  // Glucose readings: 30 days, volatile with frequent hypo/hyper
+  for (let day = 30; day >= 0; day--) {
+    const readingsPerDay = 4 + Math.floor(Math.random() * 3);
+    for (let r = 0; r < readingsPerDay; r++) {
+      // High variance, frequent lows and highs
+      const isLow = Math.random() < 0.15;
+      const isHigh = Math.random() < 0.2;
+      const value = isLow
+        ? randomGlucose(58, 12)
+        : isHigh
+          ? randomGlucose(260, 40)
+          : randomGlucose(165, 50);
+      await prisma.glucoseReading.create({
+        data: {
+          patientId: marcus.id,
+          value: Math.max(40, Math.min(400, value)),
+          source: ReadingSource.CGM,
+          takenAt: randomHour(day * 24),
+        },
+      });
+    }
+  }
+
+  // Life events — stress and poor sleep
+  for (let day = 30; day >= 0; day--) {
+    await prisma.lifeEvent.create({
+      data: {
+        patientId: marcus.id,
+        type: LifeEventType.MEAL,
+        occurredAt: randomHour(day * 24 + 12),
+        payload: JSON.stringify({ mealType: "dinner", carbs: 80, description: "Pâtes sauce bolognaise" }),
+      },
+    });
+    if (day % 2 === 0) {
+      await prisma.lifeEvent.create({
+        data: {
+          patientId: marcus.id,
+          type: LifeEventType.STRESS,
+          occurredAt: randomHour(day * 24 + 20),
+          payload: JSON.stringify({ level: "high", description: "Deadline projet travail" }),
+        },
+      });
+    }
+    if (day % 3 === 0) {
+      await prisma.lifeEvent.create({
+        data: {
+          patientId: marcus.id,
+          type: LifeEventType.SLEEP,
+          occurredAt: randomHour(day * 24 + 7),
+          payload: JSON.stringify({ hours: 5, quality: "poor" }),
+        },
+      });
+    }
+  }
+
+  // Medications
+  await prisma.medication.create({
+    data: {
+      patientId: marcus.id,
+      name: "Insuline Lantus",
+      dosage: "24U",
+      frequency: "1x/jour",
+      startDate: daysAgo(365 * 5),
+      prescribedBy: "Dr. Sarah Martin",
+      active: true,
     },
   });
-  console.log(`Created patient: ${patient.name} (${patient.id})`);
-
-  const secondPatient = await prisma.patient.create({
+  await prisma.medication.create({
     data: {
-      name: "James Wilson",
-      email: "james@carepulse.demo",
-      diabetesType: "type1" as DiabetesType,
-      passwordHash,
-      clinicianId: clinician.id,
+      patientId: marcus.id,
+      name: "Insuline NovoRapid",
+      dosage: "variable",
+      frequency: "à chaque repas",
+      startDate: daysAgo(365 * 5),
+      prescribedBy: "Dr. Sarah Martin",
+      active: true,
     },
   });
-  console.log(`Created patient: ${secondPatient.name} (${secondPatient.id})`);
 
-  console.log("Generating glucose readings for Maria...");
-  const mariaReadings = generateGlucoseData(patient.id, 30);
-  await prisma.glucoseReading.createMany({ data: mariaReadings });
-  console.log(`  Created ${mariaReadings.length} glucose readings`);
-
-  console.log("Generating life events for Maria...");
-  const mariaEvents = generateLifeEvents(patient.id, 30);
-  await prisma.lifeEvent.createMany({ data: mariaEvents });
-  console.log(`  Created ${mariaEvents.length} life events`);
-
-  console.log("Generating glucose readings for James...");
-  const jamesReadings = generateGlucoseData(secondPatient.id, 14);
-  await prisma.glucoseReading.createMany({ data: jamesReadings });
-  console.log(`  Created ${jamesReadings.length} glucose readings`);
-
-  console.log("Generating life events for James...");
-  const jamesEvents = generateLifeEvents(secondPatient.id, 14);
-  await prisma.lifeEvent.createMany({ data: jamesEvents });
-  console.log(`  Created ${jamesEvents.length} life events`);
-
-  console.log("Creating medications for Maria...");
-  await prisma.medication.createMany({
-    data: [
-      { patientId: patient.id, name: "Metformin", dosage: "500mg", frequency: "twice daily", startDate: new Date(Date.now() - 90 * 86400000) },
-      { patientId: patient.id, name: "Glipizide", dosage: "5mg", frequency: "once daily", startDate: new Date(Date.now() - 60 * 86400000) },
-    ],
+  // Lab results
+  await prisma.labResult.create({
+    data: { patientId: marcus.id, name: "HbA1c", value: 9.2, unit: "%", takenAt: daysAgo(7) },
   });
-  console.log("  Created 2 medications");
-
-  console.log("Creating lab results for Maria...");
-  await prisma.labResult.createMany({
-    data: [
-      { patientId: patient.id, name: "HbA1c", value: 7.2, unit: "%", date: new Date(Date.now() - 30 * 86400000) },
-      { patientId: patient.id, name: "Fasting Glucose", value: 126, unit: "mg/dL", date: new Date(Date.now() - 14 * 86400000) },
-      { patientId: patient.id, name: "Total Cholesterol", value: 195, unit: "mg/dL", date: new Date(Date.now() - 30 * 86400000) },
-    ],
+  await prisma.labResult.create({
+    data: { patientId: marcus.id, name: "Cholestérol total", value: 245, unit: "mg/dL", takenAt: daysAgo(7) },
   });
-  console.log("  Created 3 lab results");
+
+  console.log(`  ✓ Patient: Marcus Chen (${marcus.id}) — high-risk, volatile data`);
+
+  // ── Patient 3: Fatima Al-Rashid (Type 2, recent hospitalization) ─
+  const fatimaUser = await prisma.user.create({
+    data: {
+      email: "fatima.alrashid@carepulse.demo",
+      passwordHash,
+      role: Role.PATIENT,
+      patient: {
+        create: {
+          fullName: "Fatima Al-Rashid",
+          diabetesType: DiabetesType.TYPE_2,
+          sex: Sex.FEMALE,
+          dateOfBirth: daysAgo(365 * 64),
+          heightCm: 155,
+          weightKg: 88,
+          clinicianId: clinician.id,
+        },
+      },
+    },
+    include: { patient: true },
+  });
+  const fatima = fatimaUser.patient!;
+
+  // Glucose readings: 30 days, moderate control with post-hospitalization improvement
+  for (let day = 30; day >= 0; day--) {
+    const readingsPerDay = 2 + Math.floor(Math.random() * 2);
+    const base = day > 15 ? 200 : 160; // improved after hospital discharge
+    for (let r = 0; r < readingsPerDay; r++) {
+      await prisma.glucoseReading.create({
+        data: {
+          patientId: fatima.id,
+          value: randomGlucose(base, 30),
+          source: ReadingSource.GLUCOMETER,
+          takenAt: randomHour(day * 24),
+        },
+      });
+    }
+  }
+
+  // Life events
+  for (let day = 30; day >= 0; day--) {
+    if (day % 2 === 0) {
+      await prisma.lifeEvent.create({
+        data: {
+          patientId: fatima.id,
+          type: LifeEventType.MEAL,
+          occurredAt: randomHour(day * 24 + 12),
+          payload: JSON.stringify({ mealType: "lunch", carbs: 60, description: "Couscous avec légumes" }),
+        },
+      });
+    }
+    if (day > 14 && day < 20) {
+      await prisma.lifeEvent.create({
+        data: {
+          patientId: fatima.id,
+          type: LifeEventType.SYMPTOM,
+          occurredAt: randomHour(day * 24 + 14),
+          payload: JSON.stringify({ description: "Fatigue, vertiges", severity: "moderate" }),
+        },
+      });
+    }
+  }
+
+  // Medications
+  await prisma.medication.create({
+    data: {
+      patientId: fatima.id,
+      name: "Metformine",
+      dosage: "850mg",
+      frequency: "2x/jour",
+      startDate: daysAgo(365 * 3),
+      prescribedBy: "Dr. Sarah Martin",
+      active: true,
+    },
+  });
+  await prisma.medication.create({
+    data: {
+      patientId: fatima.id,
+      name: "Gliclazide",
+      dosage: "80mg",
+      frequency: "1x/jour",
+      startDate: daysAgo(30),
+      prescribedBy: "Dr. Sarah Martin",
+      active: true,
+    },
+  });
+
+  // Lab results
+  await prisma.labResult.create({
+    data: { patientId: fatima.id, name: "HbA1c", value: 8.5, unit: "%", takenAt: daysAgo(20) },
+  });
+  await prisma.labResult.create({
+    data: { patientId: fatima.id, name: "HbA1c", value: 7.9, unit: "%", takenAt: daysAgo(5) },
+  });
+  await prisma.labResult.create({
+    data: { patientId: fatima.id, name: "Créatinine", value: 1.2, unit: "mg/dL", takenAt: daysAgo(5) },
+  });
+
+  // Hospital encounter (recent)
+  await prisma.hospitalEncounter.create({
+    data: {
+      patientId: fatima.id,
+      timeInHospital: 5,
+      numLabProcedures: 22,
+      numProcedures: 2,
+      numMedications: 10,
+      numberOutpatient: 0,
+      numberEmergency: 1,
+      numberInpatient: 1,
+      numberDiagnoses: 7,
+      admittedAt: daysAgo(21),
+      dischargedAt: daysAgo(16),
+    },
+  });
+
+  console.log(`  ✓ Patient: Fatima Al-Rashid (${fatima.id}) — post-hospitalization`);
 
   console.log("\nSeed complete!");
-  console.log("\nDemo credentials:");
-  console.log("  Patient:    maria@carepulse.demo / demo1234");
-  console.log("  Clinician:  sarah.chen@carepulse.demo / demo1234");
-  console.log(`\n  Maria's patient ID: ${patient.id}`);
-  console.log(`  James's patient ID: ${secondPatient.id}`);
-  console.log(`  Clinician ID: ${clinician.id}`);
+  console.log("\nDemo credentials (all passwords: demo1234):");
+  console.log("  Clinician: dr.martin@carepulse.demo");
+  console.log("  Patient 1: alice.dupont@carepulse.demo (Type 2, controlled)");
+  console.log("  Patient 2: marcus.chen@carepulse.demo (Type 1, high-risk)");
+  console.log("  Patient 3: fatima.alrashid@carepulse.demo (Type 2, post-hospital)");
 }
 
 main()
   .catch((e) => {
-    console.error(e);
-    // process.exit(1);
+    console.error("Seed failed:", e);
+    process.exit(1);
   })
   .finally(async () => {
     await prisma.$disconnect();

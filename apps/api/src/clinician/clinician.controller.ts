@@ -1,41 +1,43 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Param,
-  Body,
-  UseGuards,
-} from "@nestjs/common";
+import { Controller, Get, Param, Body, Patch, UseGuards } from "@nestjs/common";
 import { ClinicianService } from "./clinician.service";
-import { ClinicianCreateSchema } from "@carepulse/shared-types";
-import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import { Role } from "@prisma/client";
 
-const createClinicianDto = new ZodValidationPipe(ClinicianCreateSchema);
-
-@UseGuards(JwtAuthGuard)
 @Controller("clinicians")
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ClinicianController {
-  constructor(private readonly clinicianService: ClinicianService) {}
+  constructor(private clinicianService: ClinicianService) {}
 
-  @Post()
-  create(@Body(createClinicianDto) data: any) {
-    return this.clinicianService.create(data);
+  @Get("me")
+  getMe(@CurrentUser() user: { userId: string; profileId: string }) {
+    return this.clinicianService.findByUserId(user.userId);
   }
 
   @Get()
+  @Roles(Role.ADMIN)
   findAll() {
     return this.clinicianService.findAll();
   }
 
   @Get(":id")
-  findById(@Param("id") id: string) {
+  @Roles(Role.ADMIN)
+  findOne(@Param("id") id: string) {
     return this.clinicianService.findById(id);
   }
 
-  @Delete(":id")
-  delete(@Param("id") id: string) {
-    return this.clinicianService.delete(id);
+  @Patch(":id")
+  @Roles(Role.CLINICIAN)
+  update(
+    @Param("id") id: string,
+    @CurrentUser() user: { userId: string; profileId: string },
+    @Body() body: Record<string, unknown>,
+  ) {
+    if (user.profileId !== id) {
+      throw new Error("Cannot update another clinician's profile");
+    }
+    return this.clinicianService.update(id, body);
   }
 }
